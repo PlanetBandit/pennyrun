@@ -9,12 +9,19 @@ the network again.
 ```
 index.html            app (UI + logic inline)
 zxing.min.js          barcode decoder, bundled at 332 KB
+ocr/                  tesseract.js OCR engine + English data (~10 MB,
+                      each device downloads one core variant, ~6 MB)
 sw.js                 service worker, caches everything for offline use
 manifest.webmanifest  makes it installable to the home screen
 icon-192.png
 icon-512.png
 apple-touch-icon.png
 ```
+
+After the barcode lands, the camera stays up and prompts for one snap
+of the clearance tag. On-device OCR (bundled tesseract.js — no network)
+reads the price, "was" price, and date and pre-fills the clue sheet;
+you confirm or correct before saving.
 
 ## Why it has to be served over HTTPS
 

@@ -2,7 +2,7 @@
    Everything the app needs is local, so one pass at install
    makes the whole thing work with zero bars in the store. */
 
-var CACHE = "pennyrun-v2";
+var CACHE = "pennyrun-v3";
 var ASSETS = [
   "./",
   "./index.html",
@@ -10,7 +10,12 @@ var ASSETS = [
   "./manifest.webmanifest",
   "./icon-192.png",
   "./icon-512.png",
-  "./apple-touch-icon.png"
+  "./apple-touch-icon.png",
+  "./ocr/tesseract.min.js",
+  "./ocr/worker.min.js",
+  "./ocr/tesseract-core-lstm.wasm.js",
+  "./ocr/tesseract-core-simd-lstm.wasm.js",
+  "./ocr/eng.traineddata.gz"
 ];
 
 self.addEventListener("install", function(e){

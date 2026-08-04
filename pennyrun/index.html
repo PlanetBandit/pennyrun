@@ -263,6 +263,25 @@ input,select,textarea{font-family:inherit;font-size:16px}
 .seg__b.is-on[data-reg="penny"]{background:var(--go);border-color:var(--go)}
 .seg__b.is-on[data-reg="full"],.seg__b.is-on[data-reg="stop"]{background:var(--stop);border-color:var(--stop)}
 
+/* ---------- tag capture (OCR) ---------- */
+.tagcap{
+  position:absolute;left:0;right:0;bottom:0;z-index:5;
+  padding:14px 12px 12px;display:flex;flex-direction:column;gap:9px;
+  background:linear-gradient(transparent,rgba(12,13,16,.9) 45%);
+}
+.tagcap__hint{
+  color:#fff;font-size:13.5px;font-weight:700;text-align:center;
+  text-shadow:0 1px 2px rgba(0,0,0,.6);
+}
+.tagcap__row{display:flex;gap:8px}
+.tagcap__row .btn{flex:1}
+.tagcap__row .btn--ghost{background:rgba(255,255,255,.92);border-color:transparent}
+.ocrline{
+  font-family:var(--mono);font-size:12px;color:var(--mute);
+  background:var(--paper);border:1px dashed var(--line);border-radius:8px;
+  padding:8px 10px;margin:-3px 0 11px;
+}
+
 /* ---------- form ---------- */
 .field{margin-bottom:11px}
 .field__l{
@@ -340,6 +359,13 @@ input,select,textarea{font-family:inherit;font-size:16px}
       <button class="scan__tool" id="torchbtn" hidden aria-label="Toggle light">☀</button>
       <button class="scan__tool" id="stopbtn" aria-label="Stop camera">✕</button>
     </div>
+    <div class="tagcap" id="tagcap" hidden>
+      <div class="tagcap__hint" id="tagcapHint">Got the barcode — now point at the clearance tag</div>
+      <div class="tagcap__row">
+        <button class="btn btn--tag" id="snapbtn">📷 Read the tag</button>
+        <button class="btn btn--ghost" id="skipbtn">Skip</button>
+      </div>
+    </div>
   </div>
 
   <div class="read is-hidden" id="read">
@@ -405,8 +431,10 @@ input,select,textarea{font-family:inherit;font-size:16px}
       <input class="field__i" id="f-name" placeholder="48 ft string light"></div>
     <div class="field"><label class="field__l" for="f-upc">UPC</label>
       <input class="field__i field__i--mono" id="f-upc" inputmode="numeric" placeholder="scan to fill"></div>
+    <div class="ocrline" id="ocrline" hidden></div>
 
     <p class="field__l" style="margin:14px 0 7px">Tag &amp; shelf clues — tap what you see</p>
+    <button class="btn btn--ghost btn--sm" id="sheetSnap" style="margin:0 0 9px">📷 Read the tag for me</button>
     <div id="cluelist"></div>
 
     <div class="field" style="margin-top:12px"><label class="field__l" for="f-ending">Tag price ending</label>
@@ -446,6 +474,7 @@ input,select,textarea{font-family:inherit;font-size:16px}
 </nav>
 
 <script src="zxing.min.js"></script>
+<script src="ocr/tesseract.min.js"></script>
 <script>
 "use strict";
 
@@ -760,6 +789,7 @@ function stopScan(){
   $("tools").hidden = true;
   $("torchbtn").hidden = true;
   $("torchbtn").classList.remove("is-on");
+  if(tagPhase){ exitTagPhase(); resumeSheet(null); }
 }
 
 function toggleTorch(){
@@ -771,6 +801,7 @@ function toggleTorch(){
 }
 
 function onCode(code){
+  if(tagPhase) return; /* barcode ignored while aiming at the tag */
   var now = Date.now();
   if(code === lastCode && (now - lastAt) < 2200) return;
   lastCode = code; lastAt = now;
@@ -801,7 +832,8 @@ function handleAssess(code){
     return;
   }
   beep("good");
-  openSheet(null, code);
+  pendingResume = { id: null, values: { upc: normUPC(code) } };
+  enterTagPhase();
 }
 
 function handleVerify(code){
@@ -856,6 +888,118 @@ function setMode(m, id){
 }
 
 /* ============================================================
+   TAG READER — on-device OCR of the clearance tag.
+   After a barcode lands, the camera stays up and one snap of the
+   tag pre-fills the clues. Everything runs locally; the OCR
+   engine is bundled in ./ocr so it works with zero bars.
+   ============================================================ */
+var tagPhase = false;
+var pendingResume = null; /* { id, values } — the sheet to reopen after the snap */
+var ocrPromise = null;
+
+function initOCR(){
+  if(ocrPromise) return ocrPromise;
+  if(!window.Tesseract) return Promise.reject(new Error("ocr-missing"));
+  ocrPromise = Tesseract.createWorker("eng", 1, {
+    workerPath: "ocr/worker.min.js",
+    corePath: "ocr/",
+    langPath: "ocr/",
+    workerBlobURL: false
+  }).catch(function(e){ ocrPromise = null; throw e; });
+  return ocrPromise;
+}
+
+/* Pull the useful facts out of whatever the OCR saw. */
+function parseTag(text){
+  var t = String(text || "");
+  var out = { now:null, was:null, date:null, prices:[] };
+  var m = t.match(/\b\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4}\b/);
+  if(m) out.date = m[0];
+  m = t.match(/was[^0-9$]{0,6}\$?\s*(\d{1,4}[.,]\d{2})/i);
+  if(m) out.was = parseFloat(m[1].replace(",", "."));
+  var re = /\$?\s*(\d{1,4}[.,]\d{2})\b/g, mm;
+  while((mm = re.exec(t))) out.prices.push(parseFloat(mm[1].replace(",", ".")));
+  var cands = out.prices.filter(function(p){ return out.was === null || p < out.was; });
+  if(cands.length) out.now = Math.min.apply(null, cands);
+  else if(out.prices.length) out.now = Math.min.apply(null, out.prices);
+  return out;
+}
+
+/* Turn a parse into pre-filled clues + a readable receipt line. */
+function applyTagRead(p){
+  var clues = {}, ending = "", bits = [];
+  function money(n){ return "$" + n.toFixed(2); }
+  if(p.now != null){
+    bits.push(money(p.now));
+    if(Math.abs(p.now - 0.01) < 1e-9) ending = "penny";
+    else {
+      var cents = Math.round(p.now * 100) % 100;
+      if(cents === 6) ending = "06";
+      else if(cents === 3) ending = "03";
+      else if(cents === 2) ending = "02";
+      else if(cents === 1) ending = "01";
+    }
+  }
+  if(p.was != null){ clues.was = true; bits.push("was " + money(p.was)); }
+  if(p.date){ clues.date = true; bits.push("dated " + p.date); }
+  if(p.was != null && p.now != null && p.was > 0 && p.now <= p.was * 0.3) clues.deep = true;
+  var summary = bits.length
+    ? "📷 Tag read: " + bits.join(" · ") + " — double-check, then fix anything it misread."
+    : "📷 Couldn't find a price or date in that frame — fill the clues by hand.";
+  return { clues: clues, ending: ending, summary: summary };
+}
+
+function enterTagPhase(){
+  tagPhase = true;
+  lastCode = "";
+  $("tagcap").hidden = false;
+  $("tagcapHint").textContent = "Got the barcode — now point at the clearance tag";
+  $("snapbtn").disabled = false;
+  $("snapbtn").textContent = "📷 Read the tag";
+  initOCR(); /* warm up in the background so the snap is quick */
+  go("scan");
+}
+function exitTagPhase(){
+  tagPhase = false;
+  $("tagcap").hidden = true;
+}
+
+function snapTag(){
+  var v = $("video");
+  if(!running || !v.videoWidth){ exitTagPhase(); resumeSheet(null); return; }
+  $("snapbtn").disabled = true;
+  $("snapbtn").textContent = "Reading…";
+  var scale = Math.min(1, 1200 / v.videoWidth);
+  var c = document.createElement("canvas");
+  c.width = Math.round(v.videoWidth * scale);
+  c.height = Math.round(v.videoHeight * scale);
+  c.getContext("2d").drawImage(v, 0, 0, c.width, c.height);
+  initOCR().then(function(w){ return w.recognize(c); }).then(function(res){
+    var parsed = parseTag(res && res.data ? res.data.text : "");
+    exitTagPhase();
+    resumeSheet(parsed);
+  }).catch(function(){
+    $("tagcapHint").textContent = "Reader hiccuped — more light, get closer, or skip.";
+    $("snapbtn").disabled = false;
+    $("snapbtn").textContent = "📷 Try again";
+  });
+}
+
+function resumeSheet(parsed){
+  var pr = pendingResume || { id: null, values: {} };
+  pendingResume = null;
+  var vals = pr.values || {};
+  if(parsed){
+    var read = applyTagRead(parsed);
+    vals.clues = vals.clues || {};
+    for(var k in read.clues){ if(read.clues[k]) vals.clues[k] = true; }
+    if(read.ending) vals.ending = read.ending;
+    vals.ocr = read.summary;
+  }
+  openSheetWith(pr.id, vals);
+}
+
+/* ============================================================
    ASSESSMENT SHEET
    ============================================================ */
 var editingId = null;
@@ -892,24 +1036,45 @@ function updateLive(){
 }
 
 function openSheet(id, prefillUPC){
+  openSheetWith(id, prefillUPC ? { upc: normUPC(prefillUPC) } : {});
+}
+
+/* vals override whatever the stored item has — used by the tag
+   reader to hand back OCR pre-fills and in-progress edits. */
+function openSheetWith(id, vals){
   editingId = id || null;
+  vals = vals || {};
   var t = id ? state.items.filter(function(x){ return x.id === id; })[0] : null;
   $("sheetH").textContent = t ? "Reassess this item" : "Check this item";
-  $("f-name").value  = t ? (t.name || "") : "";
-  $("f-upc").value   = t ? (t.upc || "") : (prefillUPC ? normUPC(prefillUPC) : "");
-  $("f-notes").value = t ? (t.notes || "") : "";
-  $("f-ending").value = t ? (t.ending || "") : "";
-  sheetClues = t && t.clues ? JSON.parse(JSON.stringify(t.clues)) : {};
-  sheetReg = t ? (t.register || "") : "";
+  $("f-name").value  = vals.name  != null ? vals.name  : (t ? (t.name  || "") : "");
+  $("f-upc").value   = vals.upc   != null ? vals.upc   : (t ? (t.upc   || "") : "");
+  $("f-notes").value = vals.notes != null ? vals.notes : (t ? (t.notes || "") : "");
+  $("f-ending").value = vals.ending != null ? vals.ending : (t ? (t.ending || "") : "");
+  var baseClues = vals.clues || (t && t.clues) || {};
+  sheetClues = JSON.parse(JSON.stringify(baseClues));
+  sheetReg = vals.register != null ? vals.register : (t ? (t.register || "") : "");
   Array.prototype.forEach.call(document.querySelectorAll("#regseg .seg__b"), function(b){
     b.classList.toggle("is-on", b.getAttribute("data-reg") === sheetReg);
   });
+  $("ocrline").hidden = !vals.ocr;
+  $("ocrline").textContent = vals.ocr || "";
   renderClues();
   updateLive();
   $("sheetDel").style.display = t ? "inline-flex" : "none";
   $("sheet").classList.add("is-on");
 }
 function closeSheet(){ $("sheet").classList.remove("is-on"); editingId = null; }
+
+function collectSheet(){
+  return {
+    name: $("f-name").value,
+    upc: $("f-upc").value,
+    notes: $("f-notes").value,
+    clues: sheetClues,
+    ending: $("f-ending").value,
+    register: sheetReg
+  };
+}
 
 function saveSheet(){
   var data = {
@@ -1028,6 +1193,15 @@ $("regseg").addEventListener("click", function(e){
 });
 
 $("f-ending").addEventListener("change", updateLive);
+
+$("snapbtn").addEventListener("click", snapTag);
+$("skipbtn").addEventListener("click", function(){ exitTagPhase(); resumeSheet(null); });
+$("sheetSnap").addEventListener("click", function(){
+  pendingResume = { id: editingId, values: collectSheet() };
+  closeSheet();
+  if(!running) startScan();
+  enterTagPhase();
+});
 
 $("addbtn").addEventListener("click", function(){ openSheet(null, null); });
 $("sheetX").addEventListener("click", closeSheet);
