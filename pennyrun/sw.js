@@ -2,7 +2,7 @@
    Everything the app needs is local, so one pass at install
    makes the whole thing work with zero bars in the store. */
 
-var CACHE = "pennyrun-v11";
+var CACHE = "pennyrun-v12";
 var ASSETS = [
   "./",
   "./index.html",
@@ -38,6 +38,26 @@ self.addEventListener("activate", function(e){
 
 self.addEventListener("fetch", function(e){
   if(e.request.method !== "GET") return;
+
+  /* The page itself goes network-first so every open picks up the
+     latest build immediately; the cache only answers offline. */
+  var accept = e.request.headers.get("accept") || "";
+  if(e.request.mode === "navigate" || accept.indexOf("text/html") !== -1){
+    e.respondWith(
+      fetch(e.request).then(function(res){
+        if(res && res.status === 200){
+          var copy = res.clone();
+          caches.open(CACHE).then(function(c){ c.put("./index.html", copy); });
+        }
+        return res;
+      }).catch(function(){
+        return caches.match("./index.html");
+      })
+    );
+    return;
+  }
+
+  /* Heavy assets (scanner, OCR, store data) stay cache-first. */
   e.respondWith(
     caches.match(e.request).then(function(hit){
       if(hit) return hit;
