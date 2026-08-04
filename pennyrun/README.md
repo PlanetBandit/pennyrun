@@ -11,6 +11,7 @@ index.html            app (UI + logic inline)
 zxing.min.js          barcode decoder, bundled at 332 KB
 ocr/                  tesseract.js OCR engine + English data (~10 MB,
                       each device downloads one core variant, ~6 MB)
+stores.json           Home Depot locations (© OpenStreetMap contributors)
 sw.js                 service worker, caches everything for offline use
 manifest.webmanifest  makes it installable to the home screen
 icon-192.png

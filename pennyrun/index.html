@@ -283,6 +283,14 @@ input,select,textarea{font-family:inherit;font-size:16px}
 }
 .linkbox{display:flex;gap:8px}
 .linkbox .field__i{flex:1;min-width:0}
+.storeitem{
+  display:flex;align-items:center;gap:10px;background:var(--paper);
+  border:1px solid var(--line);border-radius:12px;padding:12px 13px;
+  margin-bottom:8px;font-size:14px;line-height:1.35;
+}
+.storeitem b{display:block}
+.storeitem__addr{display:block;font-size:12.5px;color:var(--mute)}
+.storeitem__d{font-family:var(--mono);font-size:12px;font-weight:700;white-space:nowrap}
 
 /* ---------- form ---------- */
 .field{margin-bottom:11px}
@@ -385,12 +393,21 @@ input,select,textarea{font-family:inherit;font-size:16px}
     </div>
   </div>
 
-  <p class="pane__title" style="margin-top:18px">Or start from a link</p>
+  <p class="pane__title" style="margin-top:18px">Or start from the HD app</p>
   <div class="linkbox">
     <input class="field__i" id="linkin" placeholder="Paste a Home Depot share link">
     <button class="btn btn--tag" id="linkgo">Read</button>
   </div>
-  <p class="scan__hint">Share from the HD app straight to Penny Run, or paste the link here. Tap Read with the box empty to grab it from your clipboard.</p>
+  <button class="btn btn--ghost btn--wide" id="shotbtn" style="margin-top:8px">📸 Read an HD app screenshot</button>
+  <p class="scan__hint">Paste a share link (tap Read with the box empty to grab it from your clipboard) — or screenshot the product page and the reader pulls the clearance price, online price, and save % out of it.</p>
+</section>
+
+<!-- ============ STORES ============ -->
+<section class="pane" id="pane-stores">
+  <p class="pane__title">Store locator</p>
+  <button class="btn btn--tag btn--wide" id="locbtn">⌖ Find stores near me</button>
+  <div id="storelist" style="margin-top:12px"></div>
+  <p class="scan__hint">Straight-line distances. Locations © OpenStreetMap contributors — works offline once loaded.</p>
 </section>
 
 <!-- ============ CHECKED ============ -->
@@ -444,7 +461,10 @@ input,select,textarea{font-family:inherit;font-size:16px}
     <button class="btn btn--ghost btn--sm" id="hdlook" style="margin:-3px 0 11px">Look up at Home Depot ↗</button>
 
     <p class="field__l" style="margin:14px 0 7px">Tag &amp; shelf clues — tap what you see</p>
-    <button class="btn btn--ghost btn--sm" id="sheetSnap" style="margin:0 0 9px">📷 Read the tag for me</button>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin:0 0 9px">
+      <button class="btn btn--ghost btn--sm" id="sheetSnap">📷 Read the tag for me</button>
+      <button class="btn btn--ghost btn--sm" id="sheetShot">📸 From a screenshot</button>
+    </div>
     <div id="cluelist"></div>
 
     <div class="field" style="margin-top:12px"><label class="field__l" for="f-ending">Tag price ending</label>
@@ -476,9 +496,12 @@ input,select,textarea{font-family:inherit;font-size:16px}
   </div>
 </div>
 
+<input type="file" id="shotfile" accept="image/*" hidden>
+
 <nav class="tabs">
   <button class="tab is-on" data-pane="scan"><span class="tab__g">▚</span>Scan</button>
   <button class="tab" data-pane="checked"><span class="tab__g">⚑</span>Checked</button>
+  <button class="tab" data-pane="stores"><span class="tab__g">⌖</span>Stores</button>
   <button class="tab" data-pane="steps"><span class="tab__g">✓</span>Steps</button>
   <button class="tab" data-pane="flags"><span class="tab__g">▤</span>Rules</button>
 </nav>
@@ -543,6 +566,7 @@ var CLUES = [
   ["date",     "Tag has a printed date", "The single most trusted signal.", 2, false],
   ["was",      "Tag shows a “was” price", "Real clearance always shows what it dropped from.", 2, false],
   ["appgone",  "HD app: unavailable or limited at this store", "Tap “Look up at Home Depot” above — store must be set.", 2, false],
+  ["appclear", "HD app shows an in-store clearance price", "Product-page banner — solid confirmation it's on clearance. Screenshot it and let the 📸 reader fill this in.", 2, false],
   ["outplace", "Stock out of place, or the home shelf is pulled", "Orphans and empty home shelves late in the cycle.", 1, false],
   ["deep",     "70%+ off the “was” price", "Deep cuts mean late in the markdown cycle.", 1, false],
   ["promo",    "Yellow tag but NO date and NO “was” price", "That's a promo or plain price, not clearance.", -2, true]
@@ -646,7 +670,7 @@ function computeVerdict(a){
   var score = 0;
   CLUES.forEach(function(c){ if(a.clues && a.clues[c[0]]) score += c[3]; });
   score += ENDING_SCORE[a.ending || ""] || 0;
-  var hasTag = a.clues && (a.clues.date || a.clues.was);
+  var hasTag = a.clues && (a.clues.date || a.clues.was || a.clues.appclear);
   var pennyNote = (a.ending === "01") ? " Remember: a price ending in .01 is not a penny — $61.01 is sixty-one dollars." : "";
   if(score >= 5 && hasTag) return {
     flag:"green", tone:"go", stamp:"GREEN", icon:"✓", label:"Green flag — strong candidate",
@@ -909,6 +933,76 @@ function endingFor(price){
   return "";
 }
 
+/* ============================================================
+   SCREENSHOT READER — OCR an HD app screenshot. The product page
+   shows the in-store clearance price, online price, and save %,
+   which is exactly what a bare share link can't carry.
+   ============================================================ */
+function parseAppShot(raw){
+  var t = String(raw || "");
+  var out = { clearance:false, online:null, savePct:null, saveAmt:null, store:null };
+  if(/in[\s-]*store\s+clearance/i.test(t) || /clearance\s+(item|price)/i.test(t)) out.clearance = true;
+  var m = t.match(/online\s*price[^$0-9]{0,10}\$?\s*(\d{1,5}[.,]\d{2})/i);
+  if(m) out.online = parseFloat(m[1].replace(",", "."));
+  m = t.match(/save[^$0-9]{0,10}\$?\s*(\d{1,5}[.,]\d{2})[^(]{0,12}\(\s*(\d{1,3})\s*%\s*\)/i);
+  if(m){ out.saveAmt = parseFloat(m[1].replace(",", ".")); out.savePct = parseInt(m[2], 10); }
+  else { m = t.match(/\(\s*(\d{1,3})\s*%\s*\)/); if(m) out.savePct = parseInt(m[1], 10); }
+  var prices = [];
+  var re = /\$\s*(\d{1,5}(?:[.,]\d{2})?)(?:\s+(\d{2})\b)?/g, mm;
+  while((mm = re.exec(t))){
+    var v = null;
+    if(/[.,]/.test(mm[1])) v = parseFloat(mm[1].replace(",", "."));
+    else if(mm[2]) v = parseFloat(mm[1] + "." + mm[2]); /* "$4 50" superscript cents */
+    if(v != null && v > 0) prices.push(v);
+  }
+  var cands = prices.filter(function(p){ return p !== out.online && p !== out.saveAmt; });
+  if(out.online != null && out.saveAmt != null){
+    var derived = Math.round((out.online - out.saveAmt) * 100) / 100;
+    var hit = cands.filter(function(p){ return Math.abs(p - derived) < 0.011; });
+    out.store = hit.length ? hit[0] : derived;
+  } else if(out.online != null && out.savePct != null){
+    out.store = Math.round(out.online * (100 - out.savePct)) / 100;
+  } else if(cands.length){
+    out.store = Math.min.apply(null, cands);
+  }
+  if(out.savePct == null && out.online != null && out.store != null && out.online > 0){
+    out.savePct = Math.round((1 - out.store / out.online) * 100);
+  }
+  return out;
+}
+
+function applyAppShot(p){
+  var clues = {}, ending = "", bits = [];
+  if(p.clearance){ clues.appclear = true; bits.push("In-store clearance"); }
+  if(p.store != null){ bits.push("$" + p.store.toFixed(2) + " in store"); ending = endingFor(p.store); }
+  if(p.online != null) bits.push("online $" + p.online.toFixed(2));
+  if(p.savePct != null){ bits.push(p.savePct + "% off"); if(p.savePct >= 70) clues.deep = true; }
+  var summary = bits.length
+    ? "📸 App read: " + bits.join(" · ") + " — double-check, then add the shelf clues."
+    : "📸 Couldn't find prices in that screenshot — fill it in by hand.";
+  return { clues: clues, ending: ending, summary: summary };
+}
+
+function readShotFile(file){
+  var url = URL.createObjectURL(file);
+  var img = new Image();
+  img.onload = function(){
+    var scale = Math.min(1, 1600 / img.naturalWidth);
+    var c = document.createElement("canvas");
+    c.width = Math.round(img.naturalWidth * scale);
+    c.height = Math.round(img.naturalHeight * scale);
+    c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+    URL.revokeObjectURL(url);
+    initOCR().then(function(w){ return w.recognize(c); }).then(function(res){
+      resumeSheet(applyAppShot(parseAppShot(res && res.data ? res.data.text : "")));
+    }).catch(function(){
+      resumeSheet({ clues:{}, ending:"", summary:"📸 The reader hiccuped on that image — fill it in by hand." });
+    });
+  };
+  img.onerror = function(){ URL.revokeObjectURL(url); resumeSheet(null); };
+  img.src = url;
+}
+
 function handleHDShare(text){
   var p = parseHDShare(text);
   var bits = [];
@@ -1050,7 +1144,7 @@ function snapTag(){
   initOCR().then(function(w){ return w.recognize(c); }).then(function(res){
     var parsed = parseTag(res && res.data ? res.data.text : "");
     exitTagPhase();
-    resumeSheet(parsed);
+    resumeSheet(applyTagRead(parsed));
   }).catch(function(){
     $("tagcapHint").textContent = "Reader hiccuped — more light, get closer, or skip.";
     $("snapbtn").disabled = false;
@@ -1058,12 +1152,13 @@ function snapTag(){
   });
 }
 
-function resumeSheet(parsed){
+/* read = the {clues, ending, summary} product of applyTagRead or
+   applyAppShot; null reopens the pending sheet untouched. */
+function resumeSheet(read){
   var pr = pendingResume || { id: null, values: {} };
   pendingResume = null;
   var vals = pr.values || {};
-  if(parsed){
-    var read = applyTagRead(parsed);
+  if(read){
     vals.clues = vals.clues || {};
     for(var k in read.clues){ if(read.clues[k]) vals.clues[k] = true; }
     if(read.ending) vals.ending = read.ending;
@@ -1182,10 +1277,71 @@ function delSheet(){
 }
 
 /* ============================================================
+   STORE LOCATOR — bundled OpenStreetMap directory + GPS.
+   ============================================================ */
+var STORES = null;
+
+function loadStores(){
+  if(STORES) return Promise.resolve(STORES);
+  return fetch("stores.json").then(function(r){ return r.json(); })
+    .then(function(d){ STORES = d; return d; });
+}
+
+function distMi(a1, o1, a2, o2){
+  var R = 3958.8, rad = Math.PI / 180;
+  var s = Math.sin((a2 - a1) * rad / 2), t = Math.sin((o2 - o1) * rad / 2);
+  var h = s * s + Math.cos(a1 * rad) * Math.cos(a2 * rad) * t * t;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+function storeMsg(m){
+  $("storelist").innerHTML = '<div class="empty">' + esc(m) + '</div>';
+  $("locbtn").disabled = false;
+  $("locbtn").textContent = "⌖ Find stores near me";
+}
+
+function locate(){
+  $("locbtn").disabled = true;
+  $("locbtn").textContent = "Finding you…";
+  if(!navigator.geolocation) return storeMsg("This browser won't share a location.");
+  navigator.geolocation.getCurrentPosition(function(pos){
+    loadStores().then(function(st){
+      var la = pos.coords.latitude, lo = pos.coords.longitude;
+      var near = st.map(function(s){ return { d: distMi(la, lo, s[0], s[1]), s: s }; })
+        .sort(function(a, b){ return a.d - b.d; }).slice(0, 8);
+      var ios = /iPad|iPhone|iPod/.test(navigator.userAgent);
+      var html = "";
+      near.forEach(function(n){
+        var s = n.s;
+        var maps = ios
+          ? "https://maps.apple.com/?daddr=" + s[0] + "," + s[1]
+          : "https://www.google.com/maps/dir/?api=1&destination=" + s[0] + "," + s[1];
+        html += '<div class="storeitem">';
+        html +=   '<div style="flex:1;min-width:0"><b>' + esc(s[2]) + '</b>';
+        if(s[3]) html += '<span class="storeitem__addr">' + esc(s[3]) + '</span>';
+        html +=   '</div>';
+        html +=   '<span class="storeitem__d">' + n.d.toFixed(1) + ' mi</span>';
+        html +=   '<a class="btn btn--sm btn--ghost" href="' + esc(maps) + '" target="_blank" rel="noopener">Go ↗</a>';
+        html += '</div>';
+      });
+      $("storelist").innerHTML = html;
+      $("locbtn").disabled = false;
+      $("locbtn").textContent = "⌖ Refresh";
+    }).catch(function(){
+      storeMsg("Store list didn't load — open the app online once and it caches for good.");
+    });
+  }, function(err){
+    storeMsg(err && err.code === 1
+      ? "Location permission denied — allow it for this site in your browser settings."
+      : "Couldn't get a GPS fix. Try again with a clearer view of the sky.");
+  }, { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 });
+}
+
+/* ============================================================
    NAV
    ============================================================ */
 function go(pane){
-  ["scan","checked","steps","flags"].forEach(function(p){
+  ["scan","checked","stores","steps","flags"].forEach(function(p){
     $("pane-" + p).classList.toggle("is-on", p === pane);
   });
   Array.prototype.forEach.call(document.querySelectorAll(".tab"), function(b){
@@ -1266,6 +1422,25 @@ $("regseg").addEventListener("click", function(e){
 });
 
 $("f-ending").addEventListener("change", updateLive);
+
+$("locbtn").addEventListener("click", locate);
+
+$("shotbtn").addEventListener("click", function(){ $("shotfile").click(); });
+$("sheetShot").addEventListener("click", function(){ $("shotfile").click(); });
+$("shotfile").addEventListener("change", function(){
+  var f = this.files && this.files[0];
+  this.value = "";
+  if(!f) return;
+  if($("sheet").classList.contains("is-on")){
+    pendingResume = { id: editingId, values: collectSheet() };
+    closeSheet();
+  } else {
+    pendingResume = { id: null, values: {} };
+  }
+  go("scan");
+  showRead("hold", "📸", "Reading the screenshot…", "", "", "One moment — pulling the prices out of it.", []);
+  readShotFile(f);
+});
 
 $("linkgo").addEventListener("click", function(){
   var v = $("linkin").value.trim();
