@@ -274,6 +274,15 @@ input,select,textarea{font-family:inherit;font-size:16px}
   text-shadow:0 1px 2px rgba(0,0,0,.6);
 }
 .tagcap__row{display:flex;gap:8px}
+.flash{
+  position:absolute;inset:0;z-index:7;display:flex;align-items:center;justify-content:center;
+  text-align:center;padding:0 14px;font-size:30px;font-weight:800;letter-spacing:.05em;
+  color:#fff;opacity:0;pointer-events:none;transition:opacity .15s;
+}
+.flash.is-on{opacity:.94}
+.flash--go{background:var(--go)}
+.flash--hold{background:var(--hold)}
+.flash--stop{background:var(--stop)}
 .tagcap__row .btn{flex:1}
 .tagcap__row .btn--ghost{background:rgba(255,255,255,.92);border-color:transparent}
 .ocrline{
@@ -382,6 +391,7 @@ input,select,textarea{font-family:inherit;font-size:16px}
       <button class="scan__tool" id="torchbtn" hidden aria-label="Toggle light">☀</button>
       <button class="scan__tool" id="stopbtn" aria-label="Stop camera">✕</button>
     </div>
+    <div class="flash" id="flash"></div>
     <div class="tagcap" id="tagcap" hidden>
       <div class="tagcap__hint" id="tagcapHint">Got the barcode — now point at the clearance tag</div>
       <div class="tagcap__row">
@@ -456,14 +466,6 @@ input,select,textarea{font-family:inherit;font-size:16px}
   </div>
   <div id="itemlist"></div>
   <button class="btn btn--ghost btn--wide" id="addbtn" style="border-style:dashed">+ Check an item by hand</button>
-
-  <p class="pane__title" style="margin-top:24px">Community penny list</p>
-  <p class="scan__hint" style="margin:0 0 8px" id="plistsum"></p>
-  <textarea class="field__i" id="plist-in" rows="2" placeholder="Paste a penny-list post — UPC numbers get picked out automatically"></textarea>
-  <div style="display:flex;gap:8px;margin-top:8px">
-    <button class="btn btn--tag" id="plist-add" style="flex:1">Add to list</button>
-    <button class="btn btn--ghost" id="plist-clear">Clear</button>
-  </div>
 </section>
 
 <!-- ============ STEPS ============ -->
@@ -484,15 +486,7 @@ input,select,textarea{font-family:inherit;font-size:16px}
   <div class="flaglist is-on" data-f="go" id="flags-go"></div>
   <div class="flaglist" data-f="hold" id="flags-hold"></div>
   <div class="flaglist" data-f="stop" id="flags-stop"></div>
-
-  <p class="pane__title" style="margin-top:24px">Your data</p>
-  <p class="scan__hint" style="margin:0 0 8px">Saved on this device only. Copy a backup to move it — e.g. between Safari and the home-screen app.</p>
-  <textarea class="field__i" id="bak-in" rows="2" placeholder="Paste a backup here to import it"></textarea>
-  <div style="display:flex;gap:8px;margin-top:8px">
-    <button class="btn btn--ghost" id="bak-copy" style="flex:1">Copy backup</button>
-    <button class="btn btn--ghost" id="bak-import" style="flex:1">Import</button>
-  </div>
-  <p class="scan__hint" style="text-align:center;margin-top:16px">Penny Run · build v14</p>
+  <p class="scan__hint" style="text-align:center;margin-top:16px">Penny Run · build v15</p>
 </section>
 
 <!-- ============ ASSESSMENT SHEET ============ -->
@@ -628,7 +622,6 @@ var CLUES = [
   ["was",      "Tag shows a “was” price", "Real clearance always shows what it dropped from.", 2, false],
   ["appgone",  "HD app: unavailable or limited at this store", "Tap “Look up at Home Depot” above — store must be set.", 2, false],
   ["appclear", "HD app shows an in-store clearance price", "Product-page banner — solid confirmation it's on clearance. Screenshot it and let the 📸 reader fill this in.", 2, false],
-  ["listed",   "On a community penny list", "Imported list match. Strong signal — still verify at the register.", 2, false],
   ["outplace", "Stock out of place, or the home shelf is pulled", "Orphans and empty home shelves late in the cycle.", 1, false],
   ["deep",     "70%+ off the “was” price", "Deep cuts mean late in the markdown cycle.", 1, false],
   ["promo",    "Yellow tag but NO date and NO “was” price", "That's a promo or plain price, not clearance.", -2, true]
@@ -636,7 +629,7 @@ var CLUES = [
 
 var ENDING_SCORE = { "":0, "06":1, "03":1, "02":2, "01":0, "penny":4 };
 
-var state = { items: [], steps: [], pennyList: [], mode: "assess", verifyId: null };
+var state = { items: [], steps: [], mode: "assess", verifyId: null };
 
 function load(){
   try{
@@ -645,21 +638,15 @@ function load(){
       var p = JSON.parse(raw);
       state.items = Array.isArray(p.items) ? p.items : [];
       state.steps = Array.isArray(p.steps) ? p.steps : [];
-      state.pennyList = Array.isArray(p.pennyList) ? p.pennyList : [];
       return;
     }
   }catch(e){ /* first run or storage blocked */ }
   state.items = [];
   state.steps = [];
-  state.pennyList = [];
 }
 function save(){
-  try{ localStorage.setItem(KEY, JSON.stringify({items:state.items, steps:state.steps, pennyList:state.pennyList})); }
+  try{ localStorage.setItem(KEY, JSON.stringify({items:state.items, steps:state.steps})); }
   catch(e){ /* private mode — app still works for this session */ }
-}
-
-function pennyListHas(upc){
-  return state.pennyList.indexOf(normUPC(upc)) !== -1;
 }
 
 /* ============================================================
@@ -738,7 +725,7 @@ function computeVerdict(a){
   var score = 0;
   CLUES.forEach(function(c){ if(a.clues && a.clues[c[0]]) score += c[3]; });
   score += ENDING_SCORE[a.ending || ""] || 0;
-  var hasTag = a.clues && (a.clues.date || a.clues.was || a.clues.appclear || a.clues.listed);
+  var hasTag = a.clues && (a.clues.date || a.clues.was || a.clues.appclear);
   var pennyNote = (a.ending === "01") ? " Remember: a price ending in .01 is not a penny — $61.01 is sixty-one dollars." : "";
   if(score >= 5 && hasTag) return {
     flag:"green", tone:"go", stamp:"GREEN", icon:"✓", label:"Green flag — strong candidate", score:score, gate:true,
@@ -756,17 +743,7 @@ function computeVerdict(a){
   };
 }
 
-/* A stored item whose UPC later lands on the imported penny list
-   gets the clue automatically, without rewriting the item. */
-function verdictOf(item){
-  if(item && item.upc && pennyListHas(item.upc) && !(item.clues && item.clues.listed)){
-    var c = {};
-    for(var k in (item.clues || {})) c[k] = item.clues[k];
-    c.listed = true;
-    return computeVerdict({ clues: c, ending: item.ending, register: item.register });
-  }
-  return computeVerdict(item);
-}
+function verdictOf(item){ return computeVerdict(item); }
 
 function timeAgo(ts){
   if(!ts) return "";
@@ -784,7 +761,6 @@ var itemFilter = "all";
 
 function renderItems(){
   var el = $("itemlist");
-  renderPlist();
   if(!state.items.length){
     el.innerHTML = '<div class="empty">Nothing checked yet. Scan a box and the verdict lands here.</div>';
     renderTally(); return;
@@ -827,13 +803,6 @@ function renderItems(){
   });
   el.innerHTML = html;
   renderTally();
-}
-
-function renderPlist(){
-  var n = state.pennyList.length;
-  $("plistsum").textContent = n
-    ? n + " UPCs on file — matching scans and shares get the clue automatically."
-    : "Paste any penny-list text; UPC numbers are picked out automatically.";
 }
 
 function renderTally(){
@@ -932,7 +901,11 @@ function stopScan(){
   $("tools").hidden = true;
   $("torchbtn").hidden = true;
   $("torchbtn").classList.remove("is-on");
-  if(tagPhase){ exitTagPhase(); resumeSheet(null); }
+  if(tagPhase){
+    exitTagPhase();
+    if(pendingResume && pendingResume.quick) pendingResume = null; /* aborted scan — nothing logged */
+    else resumeSheet(null);
+  }
 }
 
 function toggleTorch(){
@@ -967,16 +940,75 @@ function findByUPC(code){
 function handleAssess(code){
   var hit = findByUPC(code);
   if(hit){
-    var v = verdictOf(hit);
-    beep(v.flag === "red" ? "bad" : "good");
-    var acts = [{ t:"Reassess", c:"btn--ghost", fn:function(){ openSheet(hit.id, null); } }];
-    if(v.flag === "green") acts.push({ t:"Match boxes to this", c:"btn--go", fn:function(){ setMode("verify", hit.id); } });
-    showRead(v.tone, v.icon, v.label, hit.name || "Checked item", normUPC(code), v.note, acts);
+    announceVerdict(hit, null);
     return;
   }
   beep("good");
-  pendingResume = { id: null, values: { upc: normUPC(code) } };
+  pendingResume = { id: null, values: { upc: normUPC(code) }, quick: true };
   enterTagPhase();
+}
+
+/* ============================================================
+   SPEED PATH — a barcode scan auto-saves and flashes the call.
+   No sheet unless the hunter asks for it.
+   ============================================================ */
+var flashTimer = null;
+
+function flashStage(v){
+  var f = $("flash");
+  f.textContent = v.stamp === "$0.01" ? "$0.01 — BUY IT"
+    : v.flag === "green" ? "GREEN — GRAB ONE"
+    : v.flag === "yellow" ? "YELLOW — MAYBE"
+    : "RED — WALK ON";
+  f.className = "flash is-on flash--" + v.tone;
+  if(navigator.vibrate){
+    navigator.vibrate(v.flag === "green" ? [60,50,60,50,160] : v.flag === "yellow" ? [60] : [220]);
+  }
+  clearTimeout(flashTimer);
+  flashTimer = setTimeout(function(){ f.className = "flash"; }, 1500);
+}
+
+function announceVerdict(item, read){
+  var v = verdictOf(item);
+  beep(v.flag === "red" ? "bad" : "good");
+  flashStage(v);
+  var acts = [
+    { t:"$0.01 ✓", c:"btn--go",   fn:function(){ setRegister(item.id, "penny"); } },
+    { t:"Full ✕",  c:"btn--stop", fn:function(){ setRegister(item.id, "full"); } },
+    { t:"Adjust",  c:"btn--ghost", fn:function(){ openSheet(item.id, null); } }
+  ];
+  if(v.flag === "green" && item.upc){
+    acts.push({ t:"Match boxes", c:"btn--ghost", fn:function(){ setMode("verify", item.id); } });
+  }
+  var note = (read && read.summary ? read.summary + " " : "") + v.note;
+  showRead(v.tone, v.icon, v.label, item.name || "Scanned item", normUPC(item.upc), note, acts);
+}
+
+function setRegister(id, reg){
+  var item = state.items.filter(function(t){ return t.id === id; })[0];
+  if(!item) return;
+  item.register = item.register === reg ? "" : reg;
+  save(); renderItems();
+  announceVerdict(item, null);
+}
+
+function quickSave(pr, read){
+  var vals = pr.values || {};
+  var clues = vals.clues || {};
+  if(read){ for(var k in read.clues){ if(read.clues[k]) clues[k] = true; } }
+  var item = null;
+  if(pr.id) item = state.items.filter(function(t){ return t.id === pr.id; })[0];
+  if(!item){
+    item = { id: "i-" + Date.now().toString(36), at: Date.now(),
+             name: vals.name || "", upc: vals.upc || "", notes: vals.notes || "",
+             clues: {}, ending: "", register: "" };
+    state.items.unshift(item);
+  }
+  item.clues = clues;
+  if(read && read.ending) item.ending = read.ending;
+  else if(vals.ending) item.ending = vals.ending;
+  save(); renderItems();
+  announceVerdict(item, read);
 }
 
 function handleVerify(code){
@@ -1188,7 +1220,7 @@ function setMode(m, id){
       ? "Checking every box against " + (t.name || "UPC " + normUPC(t.upc)) + ". Green means take it."
       : "Get a green flag first, then match the other boxes against it.";
   } else {
-    $("modehint").textContent = "Scan any box — answer a few clues and get a green, yellow, or red flag.";
+    $("modehint").textContent = "Scan a box — the verdict flashes in seconds. Green means grab one and hit self-checkout.";
   }
   go("scan");
 }
@@ -1289,6 +1321,7 @@ function snapTag(){
 function resumeSheet(read){
   var pr = pendingResume || { id: null, values: {} };
   pendingResume = null;
+  if(pr.quick) return quickSave(pr, read);
   var vals = pr.values || {};
   if(read){
     vals.clues = vals.clues || {};
@@ -1305,7 +1338,6 @@ function resumeSheet(read){
 var editingId = null;
 var sheetClues = {};
 var sheetReg = "";
-var sheetAutoListed = false;
 
 function renderClues(){
   var html = "";
@@ -1328,12 +1360,6 @@ function currentAssessment(){
 }
 
 function updateLive(){
-  var u = normUPC($("f-upc").value);
-  if(u && pennyListHas(u) && !sheetClues.listed && !sheetAutoListed){
-    sheetClues.listed = true;
-    sheetAutoListed = true;
-    renderClues();
-  }
   var a = currentAssessment();
   var v = computeVerdict(a);
   $("liveV").className = "read read--" + v.tone;
@@ -1344,7 +1370,7 @@ function updateLive(){
   var math = "";
   if(!a.register && v.flag !== "green"){
     math = "Score " + v.score + " · green needs 5";
-    if(!v.gate) math += " + an anchor clue (date, “was”, app clearance, or penny list)";
+    if(!v.gate) math += " + an anchor clue (date, “was”, or app clearance)";
   }
   $("liveMath").textContent = math;
 }
@@ -1366,7 +1392,6 @@ function openSheetWith(id, vals){
   $("f-ending").value = vals.ending != null ? vals.ending : (t ? (t.ending || "") : "");
   var baseClues = vals.clues || (t && t.clues) || {};
   sheetClues = JSON.parse(JSON.stringify(baseClues));
-  sheetAutoListed = false;
   sheetReg = vals.register != null ? vals.register : (t ? (t.register || "") : "");
   Array.prototype.forEach.call(document.querySelectorAll("#regseg .seg__b"), function(b){
     b.classList.toggle("is-on", b.getAttribute("data-reg") === sheetReg);
@@ -1410,11 +1435,7 @@ function saveSheet(){
     saved = data;
   }
   save(); renderItems(); closeSheet();
-  var v = verdictOf(saved);
-  beep(v.flag === "red" ? "bad" : "good");
-  var acts = [{ t:"Reassess", c:"btn--ghost", fn:function(){ openSheet(saved.id, null); } }];
-  if(v.flag === "green" && saved.upc) acts.push({ t:"Match boxes to this", c:"btn--go", fn:function(){ setMode("verify", saved.id); } });
-  showRead(v.tone, v.icon, v.label, saved.name || "Checked item", normUPC(saved.upc), v.note, acts);
+  announceVerdict(saved, null);
 }
 
 function delSheet(){
@@ -1535,60 +1556,6 @@ $("fchips").addEventListener("click", function(e){
   renderItems();
 });
 
-$("plist-add").addEventListener("click", function(){
-  var found = ($("plist-in").value.match(/\d{11,13}/g) || []).map(normUPC);
-  var added = 0;
-  found.forEach(function(u){
-    if(u && state.pennyList.indexOf(u) === -1){ state.pennyList.push(u); added++; }
-  });
-  $("plist-in").value = "";
-  save(); renderItems();
-  $("plistsum").textContent = added
-    ? "Added " + added + " — " + state.pennyList.length + " UPCs on file."
-    : "No new UPCs found in that paste (" + state.pennyList.length + " on file).";
-});
-
-$("plist-clear").addEventListener("click", function(){
-  state.pennyList = [];
-  save(); renderItems();
-});
-
-$("bak-copy").addEventListener("click", function(){
-  var b = this;
-  var payload = JSON.stringify({ items: state.items, pennyList: state.pennyList });
-  if(navigator.clipboard && navigator.clipboard.writeText){
-    navigator.clipboard.writeText(payload).then(function(){
-      b.textContent = "Copied ✓";
-      setTimeout(function(){ b.textContent = "Copy backup"; }, 1600);
-    }).catch(function(){ $("bak-in").value = payload; });
-  } else {
-    $("bak-in").value = payload;
-  }
-});
-
-$("bak-import").addEventListener("click", function(){
-  var b = this;
-  try{
-    var p = JSON.parse($("bak-in").value);
-    var items = Array.isArray(p) ? p : (p.items || []);
-    var added = 0;
-    items.forEach(function(it){
-      if(it && it.id && !state.items.some(function(x){ return x.id === it.id; })){
-        state.items.push(it); added++;
-      }
-    });
-    (Array.isArray(p) ? [] : (p.pennyList || [])).forEach(function(u){
-      if(state.pennyList.indexOf(u) === -1) state.pennyList.push(u);
-    });
-    state.items.sort(function(a, c){ return (c.at || 0) - (a.at || 0); });
-    save(); renderItems();
-    $("bak-in").value = "";
-    b.textContent = "Imported " + added + " ✓";
-  }catch(e){
-    b.textContent = "Couldn't read that";
-  }
-  setTimeout(function(){ b.textContent = "Import"; }, 2000);
-});
 
 $("steplist").addEventListener("click", function(e){
   var b = e.target.closest(".step");
