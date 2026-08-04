@@ -432,6 +432,7 @@ input,select,textarea{font-family:inherit;font-size:16px}
     <div class="field"><label class="field__l" for="f-upc">UPC</label>
       <input class="field__i field__i--mono" id="f-upc" inputmode="numeric" placeholder="scan to fill"></div>
     <div class="ocrline" id="ocrline" hidden></div>
+    <button class="btn btn--ghost btn--sm" id="hdlook" style="margin:-3px 0 11px">Look up at Home Depot ↗</button>
 
     <p class="field__l" style="margin:14px 0 7px">Tag &amp; shelf clues — tap what you see</p>
     <button class="btn btn--ghost btn--sm" id="sheetSnap" style="margin:0 0 9px">📷 Read the tag for me</button>
@@ -532,7 +533,7 @@ var FLAGS = {
 var CLUES = [
   ["date",     "Tag has a printed date", "The single most trusted signal.", 2, false],
   ["was",      "Tag shows a “was” price", "Real clearance always shows what it dropped from.", 2, false],
-  ["appgone",  "HD app: unavailable or limited at this store", "Check the app with your store set.", 2, false],
+  ["appgone",  "HD app: unavailable or limited at this store", "Tap “Look up at Home Depot” above — store must be set.", 2, false],
   ["outplace", "Stock out of place, or the home shelf is pulled", "Orphans and empty home shelves late in the cycle.", 1, false],
   ["deep",     "70%+ off the “was” price", "Deep cuts mean late in the markdown cycle.", 1, false],
   ["promo",    "Yellow tag but NO date and NO “was” price", "That's a promo or plain price, not clearance.", -2, true]
@@ -850,7 +851,17 @@ function handleVerify(code){
   }
 }
 
+/* Search-by-UPC on homedepot.com; on a phone it hands off to the
+   HD app where the user's store is already set. */
+function openHD(upc){
+  var u = normUPC(upc);
+  if(!u) return;
+  window.open("https://www.homedepot.com/s/" + encodeURIComponent(u), "_blank", "noopener");
+}
+
 function showRead(tone, icon, label, name, code, note, acts){
+  acts = (acts || []).slice();
+  if(code) acts.push({ t:"Look up at HD ↗", c:"btn--ghost", fn:function(){ openHD(code); } });
   var r = $("read");
   r.className = "read read--" + tone;
   $("readIcon").textContent = icon;
@@ -1193,6 +1204,12 @@ $("regseg").addEventListener("click", function(e){
 });
 
 $("f-ending").addEventListener("change", updateLive);
+
+$("hdlook").addEventListener("click", function(){
+  var u = normUPC($("f-upc").value);
+  if(!u){ $("f-upc").focus(); return; }
+  openHD(u);
+});
 
 $("snapbtn").addEventListener("click", snapTag);
 $("skipbtn").addEventListener("click", function(){ exitTagPhase(); resumeSheet(null); });
