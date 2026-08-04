@@ -428,7 +428,7 @@ input,select,textarea{font-family:inherit;font-size:16px}
         <button class="btn btn--sm btn--ghost" data-copy="rx-pat">Copy</button></div></li>
       <li>Add action <b>Combine Text</b> (combine Matches, separator: Spaces).</li>
       <li>Add action <b>URL Encode</b> (on the Combined Text).</li>
-      <li>Add action <b>Text</b> and build this, inserting the variables where the brackets are:
+      <li>Add action <b>Text</b> and build this — each [bracketed] part means insert that variable chip there; the finished text should contain no brackets:
         <div class="copyrow"><code id="rx-url">https://planetbandit.github.io/pennyrun/?text=[URL&nbsp;Encoded&nbsp;Text]&amp;url=[URLs]</code>
         <button class="btn btn--sm btn--ghost" data-copy="rx-url">Copy</button></div></li>
       <li>Add action <b>Open URLs</b> (on that Text). Done — in the HD app tap Share → <b>Send to Penny Run</b>.</li>
@@ -1557,7 +1557,9 @@ setMode("assess", null);
   try{
     var q = new URLSearchParams(location.search);
     if(!(q.has("title") || q.has("text") || q.has("url"))) return;
-    var shared = [q.get("title"), q.get("text"), q.get("url")].filter(Boolean).join(" ");
+    /* strip stray [ ] — a hand-built shortcut sometimes keeps the
+       placeholder brackets around its variables */
+    var shared = [q.get("title"), q.get("text"), q.get("url")].filter(Boolean).join(" ").replace(/[\[\]]/g, " ");
     history.replaceState(null, "", location.pathname);
     if(/homedepot\.com/i.test(shared)) handleHDShare(shared);
   }catch(e){}
