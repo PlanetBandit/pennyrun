@@ -470,6 +470,7 @@ input,select,textarea{font-family:inherit;font-size:16px}
   <div class="flaglist is-on" data-f="go" id="flags-go"></div>
   <div class="flaglist" data-f="hold" id="flags-hold"></div>
   <div class="flaglist" data-f="stop" id="flags-stop"></div>
+  <p class="scan__hint" style="text-align:center;margin-top:16px">Penny Run · build v11</p>
 </section>
 
 <!-- ============ ASSESSMENT SHEET ============ -->
@@ -1551,18 +1552,29 @@ renderSteps();
 renderFlags();
 setMode("assess", null);
 
-/* Android share-target intake: the HD app's share lands here as
-   ?title=&text=&url= query params on the start URL. */
+/* Share intake: the Android share target and the iPhone shortcut
+   both land here as ?title=&text=&url= query params. Every arrival
+   gets a visible response so a wiring problem is diagnosable. */
 (function(){
+  var q;
+  try{ q = new URLSearchParams(location.search); }catch(e){ return; }
+  if(!(q.has("title") || q.has("text") || q.has("url"))) return;
+  /* strip stray [ ] — a hand-built shortcut sometimes keeps the
+     placeholder brackets around its variables */
+  var shared = [q.get("title"), q.get("text"), q.get("url")].filter(Boolean).join(" ").replace(/[\[\]]/g, " ");
+  history.replaceState(null, "", location.pathname);
   try{
-    var q = new URLSearchParams(location.search);
-    if(!(q.has("title") || q.has("text") || q.has("url"))) return;
-    /* strip stray [ ] — a hand-built shortcut sometimes keeps the
-       placeholder brackets around its variables */
-    var shared = [q.get("title"), q.get("text"), q.get("url")].filter(Boolean).join(" ").replace(/[\[\]]/g, " ");
-    history.replaceState(null, "", location.pathname);
-    if(/homedepot\.com/i.test(shared)) handleHDShare(shared);
-  }catch(e){}
+    if(/homedepot\.com/i.test(shared)){
+      handleHDShare(shared);
+    } else {
+      showRead("hold", "?", "Share arrived — no HD link in it", "Nothing to parse", "",
+        "The share reached the app but didn't include a homedepot.com link. It carried: “" +
+        (shared.trim() ? shared.trim().slice(0, 140) : "nothing at all") + "”", []);
+    }
+  }catch(e){
+    showRead("stop", "!", "Share arrived but broke", "Parsing error", "",
+      "Send this to your app tinkerer: " + (e && e.message ? e.message : e), []);
+  }
 })();
 
 if("serviceWorker" in navigator){
