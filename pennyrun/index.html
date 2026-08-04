@@ -485,7 +485,7 @@ input,select,textarea{font-family:inherit;font-size:16px}
   <div class="flaglist is-on" data-f="go" id="flags-go"></div>
   <div class="flaglist" data-f="hold" id="flags-hold"></div>
   <div class="flaglist" data-f="stop" id="flags-stop"></div>
-  <p class="scan__hint" style="text-align:center;margin-top:16px">Penny Run · build v17</p>
+  <p class="scan__hint" style="text-align:center;margin-top:16px">Penny Run · build v18</p>
 </section>
 
 <!-- ============ ASSESSMENT SHEET ============ -->
@@ -1269,6 +1269,8 @@ function guessName(text){
     if(t.length < 8 || t.length > 90) return;
     if(/[$]|\d{5,}/.test(t)) return;
     if(/\b(clearance|online|price|save|was|now|sku|model|store|visit|purchase|supplies|pickup|delivery|cart|questions|answers|per|each)\b/i.test(t)) return;
+    if(/\b(retailer|improvement|shop all|log in|sign in|my account|customer|services|directions|avenue|ave\.|street|blvd|suite|hours|open until|closes|search)\b/i.test(t)) return;
+    if(/^#/.test(t)) return;
     var letters = (t.match(/[A-Za-z]/g) || []).length;
     if(letters / t.length < 0.6) return;
     if(t.length > best.length) best = t;
@@ -1752,7 +1754,8 @@ setMode("assess", null);
   history.replaceState(null, "", location.pathname);
   try{
     if(/homedepot\.com/i.test(shared) ||
-       /\$\s*\d|"price"|clearance|OUT_OF_STOCK|LIMITED_STOCK|BACKORDERED/i.test(shared)){
+       /\$\s*\d|"price"|clearance|OUT_OF_STOCK|LIMITED_STOCK|BACKORDERED/i.test(shared) ||
+       /home improvement retailer|the home depot|shop all services/i.test(shared)){
       handleHDShare(shared);
     } else {
       showRead("hold", "?", "Share arrived — no HD link in it", "Nothing to parse", "",
