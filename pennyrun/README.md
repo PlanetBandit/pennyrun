@@ -77,9 +77,14 @@ keep handing you an old build after you edit anything.
 3. Launch from the icon. Tap **Start camera** and allow access once.
 4. Airplane-mode it to confirm the offline cache took.
 
-## Editing the seed data
+## How verdicts work
 
-`SEED_TARGETS` near the top of the script block in `index.html` holds the
-Monteaux entry. Saved state lives in `localStorage` under `pennyrun.v1`,
-so changing the seed won't affect a phone that already has data — clear
-site data or bump `KEY` to force a reset.
+There is no preloaded list. Scanning a box opens an assessment sheet:
+tap the clues you can see (dated tag, "was" price, app availability,
+out-of-place stock, price ending) and the app scores them into a green,
+yellow, or red flag. A register result overrides everything — $0.01 is
+a confirmed green, full price or stop-sale is red. The weights live in
+`CLUES` and `ENDING_SCORE` near the top of the script block in
+`index.html`. Checked items are saved in `localStorage` under
+`pennyrun.v2`; bump `KEY` or the `CACHE` name in `sw.js` to force a
+reset after edits.

@@ -165,13 +165,11 @@ input,select,textarea{font-family:inherit;font-size:16px}
   background:repeating-linear-gradient(90deg,var(--ink) 0 6px,transparent 6px 12px);
   opacity:.22;
 }
-.tag--done{background:#EFEDE6;border-color:var(--line)}
 .tag__eyebrow{
   font-size:10px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;
   color:rgba(20,22,26,.62);display:flex;justify-content:space-between;gap:8px;
 }
 .tag__name{font-size:17px;font-weight:800;line-height:1.2;margin:5px 0 2px}
-.tag__model{font-family:var(--mono);font-size:12px;font-weight:600}
 .tag__grid{
   display:grid;grid-template-columns:1fr 1fr;gap:2px 14px;margin-top:9px;
   font-family:var(--mono);font-size:11px;
@@ -192,10 +190,9 @@ input,select,textarea{font-family:inherit;font-size:16px}
   opacity:.88;pointer-events:none;animation:stamp .22s ease-out;
 }
 @keyframes stamp{from{transform:rotate(-13deg) scale(1.7);opacity:0}to{transform:rotate(-13deg) scale(1);opacity:.88}}
-.tag__stamp--penny{color:var(--go)}
-.tag__stamp--regular{color:var(--mute)}
+.tag__stamp--go{color:var(--go)}
+.tag__stamp--hold{color:var(--hold)}
 .tag__stamp--stop{color:var(--stop)}
-.tag__stamp--missing{color:var(--mute)}
 .tag__notes{
   font-size:13px;margin-top:9px;padding-top:9px;
   border-top:1px dashed rgba(20,22,26,.28);
@@ -239,6 +236,32 @@ input,select,textarea{font-family:inherit;font-size:16px}
 .flaglist[data-f="hold"] .flagitem{border-left-color:var(--hold)}
 .flaglist[data-f="stop"] .flagitem{border-left-color:var(--stop)}
 .flagitem b{display:block;margin-bottom:3px}
+
+/* ---------- clue toggles (assessment) ---------- */
+.clue{
+  display:flex;gap:11px;align-items:flex-start;width:100%;text-align:left;
+  background:var(--paper);border:1px solid var(--line);border-radius:10px;
+  padding:11px 12px;margin-bottom:8px;font-size:14.5px;line-height:1.35;
+}
+.clue__box{
+  width:24px;height:24px;flex:none;border-radius:7px;border:2px solid var(--line);
+  display:flex;align-items:center;justify-content:center;
+  font-size:14px;font-weight:800;color:transparent;margin-top:1px;
+}
+.clue.is-on{border-color:var(--go);background:var(--go-bg)}
+.clue.is-on .clue__box{border-color:var(--go);background:var(--go);color:#fff}
+.clue--bad.is-on{border-color:var(--stop);background:var(--stop-bg)}
+.clue--bad.is-on .clue__box{border-color:var(--stop);background:var(--stop)}
+.clue__sub{display:block;font-size:12.5px;color:var(--mute);margin-top:2px}
+.seg{display:flex;gap:6px;flex-wrap:wrap}
+.seg__b{
+  flex:1;min-width:70px;padding:10px 6px;border-radius:10px;border:1px solid var(--line);
+  background:var(--paper);font-size:12px;font-weight:800;
+  letter-spacing:.04em;text-transform:uppercase;color:var(--mute);
+}
+.seg__b.is-on{background:var(--ink);border-color:var(--ink);color:#fff}
+.seg__b.is-on[data-reg="penny"]{background:var(--go);border-color:var(--go)}
+.seg__b.is-on[data-reg="full"],.seg__b.is-on[data-reg="stop"]{background:var(--stop);border-color:var(--stop)}
 
 /* ---------- form ---------- */
 .field{margin-bottom:11px}
@@ -300,10 +323,10 @@ input,select,textarea{font-family:inherit;font-size:16px}
 <!-- ============ SCAN ============ -->
 <section class="pane is-on" id="pane-scan">
   <div class="scan__bar">
-    <button class="scan__mode is-on" data-mode="lookup" id="mode-lookup">Look up</button>
+    <button class="scan__mode is-on" data-mode="assess" id="mode-assess">Check item</button>
     <button class="scan__mode" data-mode="verify" id="mode-verify">Match boxes</button>
   </div>
-  <p class="scan__hint" id="modehint">Scan any box to see if it's on your list.</p>
+  <p class="scan__hint" id="modehint">Scan any box — answer a few clues and get a green, yellow, or red flag.</p>
 
   <div class="scan__stage" id="stage">
     <video class="scan__video" id="video" playsinline muted></video>
@@ -335,11 +358,11 @@ input,select,textarea{font-family:inherit;font-size:16px}
   </div>
 </section>
 
-<!-- ============ TARGETS ============ -->
-<section class="pane" id="pane-targets">
-  <p class="pane__title">Today's targets</p>
-  <div id="taglist"></div>
-  <button class="btn btn--ghost btn--wide" id="addbtn" style="border-style:dashed">+ Add a target</button>
+<!-- ============ CHECKED ============ -->
+<section class="pane" id="pane-checked">
+  <p class="pane__title">Checked items</p>
+  <div id="itemlist"></div>
+  <button class="btn btn--ghost btn--wide" id="addbtn" style="border-style:dashed">+ Check an item by hand</button>
 </section>
 
 <!-- ============ STEPS ============ -->
@@ -362,35 +385,64 @@ input,select,textarea{font-family:inherit;font-size:16px}
   <div class="flaglist" data-f="stop" id="flags-stop"></div>
 </section>
 
-<!-- ============ SHEET ============ -->
+<!-- ============ ASSESSMENT SHEET ============ -->
 <div class="sheet" id="sheet">
   <div class="sheet__card">
-    <h2 class="sheet__h" id="sheetH">Add a target</h2>
-    <div class="field"><label class="field__l" for="f-name">Item name</label>
-      <input class="field__i" id="f-name" placeholder="Monteaux 48 ft string light"></div>
-    <div class="field"><label class="field__l" for="f-model">Model number</label>
-      <input class="field__i field__i--mono" id="f-model" placeholder="BALCST_048"></div>
-    <div class="field"><label class="field__l" for="f-sku">Store SKU</label>
-      <input class="field__i field__i--mono" id="f-sku" inputmode="numeric" placeholder="1013891924"></div>
-    <div class="field"><label class="field__l" for="f-upc">UPC (blank = bind on first scan)</label>
+    <h2 class="sheet__h" id="sheetH">Check this item</h2>
+
+    <div class="read read--stop" id="liveV" style="margin:0 0 14px">
+      <div class="read__top">
+        <div class="read__icon" id="liveIcon">✕</div>
+        <div style="flex:1;min-width:0">
+          <div class="read__label" id="liveLabel"></div>
+          <p class="read__name" id="liveFlag"></p>
+        </div>
+      </div>
+      <div class="read__body"><p class="read__note" id="liveNote" style="margin-bottom:0"></p></div>
+    </div>
+
+    <div class="field"><label class="field__l" for="f-name">Item name (optional)</label>
+      <input class="field__i" id="f-name" placeholder="48 ft string light"></div>
+    <div class="field"><label class="field__l" for="f-upc">UPC</label>
       <input class="field__i field__i--mono" id="f-upc" inputmode="numeric" placeholder="scan to fill"></div>
-    <div class="field"><label class="field__l" for="f-aisle">Where it lives</label>
-      <input class="field__i" id="f-aisle" placeholder="Lighting — string lights"></div>
-    <div class="field"><label class="field__l" for="f-notes">Notes</label>
-      <textarea class="field__i" id="f-notes" rows="2" placeholder="Limited stock, delivery unavailable"></textarea></div>
+
+    <p class="field__l" style="margin:14px 0 7px">Tag &amp; shelf clues — tap what you see</p>
+    <div id="cluelist"></div>
+
+    <div class="field" style="margin-top:12px"><label class="field__l" for="f-ending">Tag price ending</label>
+      <select class="field__i" id="f-ending">
+        <option value="">Regular price / no clearance tag</option>
+        <option value="06">.06 — early markdown, will drop again</option>
+        <option value="03">.03 — late markdown</option>
+        <option value="02">.02 — very late, close to the pull</option>
+        <option value="01">.01 but more than a penny (e.g. $61.01)</option>
+        <option value="penny">$0.01 exactly on the tag</option>
+      </select></div>
+
+    <p class="field__l" style="margin:14px 0 7px">Register result — overrides everything</p>
+    <div class="seg" id="regseg">
+      <button class="seg__b is-on" data-reg="">Not tried</button>
+      <button class="seg__b" data-reg="penny">$0.01</button>
+      <button class="seg__b" data-reg="full">Full price</button>
+      <button class="seg__b" data-reg="stop">Stop-sale</button>
+    </div>
+
+    <div class="field" style="margin-top:12px"><label class="field__l" for="f-notes">Notes</label>
+      <textarea class="field__i" id="f-notes" rows="2" placeholder="Aisle 12 overhead, 6 boxes"></textarea></div>
+
     <div style="display:flex;gap:8px;margin-top:14px">
       <button class="btn btn--ghost" id="sheetDel" style="display:none">Delete</button>
       <button class="btn btn--ghost" id="sheetX" style="flex:1">Cancel</button>
-      <button class="btn btn--tag" id="sheetSave" style="flex:1">Save</button>
+      <button class="btn btn--tag" id="sheetSave" style="flex:1">Save verdict</button>
     </div>
   </div>
 </div>
 
 <nav class="tabs">
   <button class="tab is-on" data-pane="scan"><span class="tab__g">▚</span>Scan</button>
-  <button class="tab" data-pane="targets"><span class="tab__g">▤</span>Targets</button>
+  <button class="tab" data-pane="checked"><span class="tab__g">⚑</span>Checked</button>
   <button class="tab" data-pane="steps"><span class="tab__g">✓</span>Steps</button>
-  <button class="tab" data-pane="flags"><span class="tab__g">⚑</span>Rules</button>
+  <button class="tab" data-pane="flags"><span class="tab__g">▤</span>Rules</button>
 </nav>
 
 <script src="zxing.min.js"></script>
@@ -400,36 +452,24 @@ input,select,textarea{font-family:inherit;font-size:16px}
 /* ============================================================
    STATE
    ============================================================ */
-var KEY = "pennyrun.v1";
-
-var SEED_TARGETS = [{
-  id: "t-monteaux",
-  name: "Monteaux 48 ft Edison string light",
-  model: "BALCST_048",
-  sku: "1013891924",
-  internet: "334858485",
-  upc: "",
-  aisle: "Lighting — string lights",
-  notes: "Listed $29.97–$39.97. Site shows Limited Stock + delivery unavailable. Not a confirmed penny — scan to find out. Confirm the box: 24 bulbs, 2200K, black cord, 46 ft lighted.",
-  verdict: null
-}];
+var KEY = "pennyrun.v2";
 
 var STEPS = [
-  ["Set your store in the Home Depot app", "Search the SKU. Note the aisle, bay, and any \u201climited stock\u201d or \u201cunavailable\u201d flag."],
+  ["Set your store in the Home Depot app", "Search the SKU. Note the aisle, bay, and any “limited stock” or “unavailable” flag."],
   ["Walk the aisle", "Check the home shelf and the overhead directly above it. Missed stock hides up there."],
-  ["Read the tag properly", "A real clearance tag has a date AND a \u201cwas\u201d price. No date, no \u201cwas\u201d = not clearance."],
-  ["Stack your clues", "Out-of-place stock, big was\u2192now gap, app says unavailable in store. Two or three on one item is your signal."],
+  ["Read the tag properly", "A real clearance tag has a date AND a “was” price. No date, no “was” = not clearance."],
+  ["Scan the box and log the clues", "The verdict tells you green, yellow, or red. Two or three clues on one item is your signal."],
   ["Take ONE unit to self-checkout", "Leave the rest on the shelf until you know."],
   ["Scan the UPC on the box", "Thumb over any QR code. Never scan the yellow shelf tag."],
   ["Read the register", "$0.01 means buy it now and get the receipt in your hand."],
-  ["If it pennied, go back for the rest", "Scan each additional box here in Match mode \u2014 same SKU can carry two different UPCs."]
+  ["If it pennied, go back for the rest", "Scan each additional box here in Match mode — same SKU can carry two different UPCs."]
 ];
 
 var FLAGS = {
   go: [
     ["Register rang $0.01", "The only real proof. Finish the sale, take the receipt."],
-    ["Two or three clues on one item", "Out of place, dated clearance tag with a \u201cwas\u201d price, and the app showing unavailable in store."],
-    ["Tag has a date and a \u201cwas\u201d price", "Trust in this order: date, then the \u201cwas\u201d price, then aisle/bay, then the price ending."],
+    ["Two or three clues on one item", "Out of place, dated clearance tag with a “was” price, and the app showing unavailable in store."],
+    ["Tag has a date and a “was” price", "Trust in this order: date, then the “was” price, then aisle/bay, then the price ending."],
     ["Old tag date plus a deep discount", "Late in the cycle, close to being pulled. Worth a scan."],
     ["One item pennied", "Check the rest of that category. Whole product lines go together."],
     ["Anyone can buy them", "Only employees and their families can't."]
@@ -437,7 +477,7 @@ var FLAGS = {
   hold: [
     ["Yellow doesn't mean clearance", "Promos print on yellow too, and sometimes regular prices do when white stock runs out."],
     ["A price ending in .01 is not a penny", "$61.01 is sixty-one dollars. A penny is one cent, total."],
-    ["Price endings are unreliable now", ".06 \u2192 .03 \u2192 .02 \u2192 .01 is broken and varies by store. A .02 or .03 can still flip within 48 hours."],
+    ["Price endings are unreliable now", ".06 → .03 → .02 → .01 is broken and varies by store. A .02 or .03 can still flip within 48 hours."],
     ["Handwriting on a box is a maybe", "Staff also mark damaged and returned stock."],
     ["Same SKU, two UPCs", "Old version may penny while the new one rings full. Match every box before you commit."],
     ["Self-checkout is the softer play", "If it rings full price, say you were price-checking and put it back."],
@@ -457,23 +497,37 @@ var FLAGS = {
   ]
 };
 
-var state = { targets: [], steps: [], mode: "lookup", verifyId: null };
+/* The clue checklist the verdict is scored from. Weights mirror
+   the field rules: date + was + app-unavailable are the trusted
+   trio; a yellow tag with neither date nor was is a promo smell. */
+var CLUES = [
+  ["date",     "Tag has a printed date", "The single most trusted signal.", 2, false],
+  ["was",      "Tag shows a “was” price", "Real clearance always shows what it dropped from.", 2, false],
+  ["appgone",  "HD app: unavailable or limited at this store", "Check the app with your store set.", 2, false],
+  ["outplace", "Stock out of place, or the home shelf is pulled", "Orphans and empty home shelves late in the cycle.", 1, false],
+  ["deep",     "70%+ off the “was” price", "Deep cuts mean late in the markdown cycle.", 1, false],
+  ["promo",    "Yellow tag but NO date and NO “was” price", "That's a promo or plain price, not clearance.", -2, true]
+];
+
+var ENDING_SCORE = { "":0, "06":1, "03":1, "02":2, "01":0, "penny":4 };
+
+var state = { items: [], steps: [], mode: "assess", verifyId: null };
 
 function load(){
   try{
     var raw = localStorage.getItem(KEY);
     if(raw){
       var p = JSON.parse(raw);
-      state.targets = Array.isArray(p.targets) ? p.targets : SEED_TARGETS.slice();
-      state.steps   = Array.isArray(p.steps)   ? p.steps   : [];
+      state.items = Array.isArray(p.items) ? p.items : [];
+      state.steps = Array.isArray(p.steps) ? p.steps : [];
       return;
     }
   }catch(e){ /* first run or storage blocked */ }
-  state.targets = JSON.parse(JSON.stringify(SEED_TARGETS));
+  state.items = [];
   state.steps = [];
 }
 function save(){
-  try{ localStorage.setItem(KEY, JSON.stringify({targets:state.targets, steps:state.steps})); }
+  try{ localStorage.setItem(KEY, JSON.stringify({items:state.items, steps:state.steps})); }
   catch(e){ /* private mode — app still works for this session */ }
 }
 
@@ -535,34 +589,62 @@ function barsFor(code){
 }
 
 /* ============================================================
-   RENDER — targets
+   VERDICT ENGINE
    ============================================================ */
-var VERDICT = {
-  penny:   { stamp:"$0.01",     cls:"penny",   label:"Pennied" },
-  regular: { stamp:"FULL",      cls:"regular", label:"Rang full price" },
-  stop:    { stamp:"STOP-SALE", cls:"stop",    label:"Stop-sale" },
-  missing: { stamp:"NOT FOUND", cls:"missing", label:"Not on the shelf" }
-};
+function computeVerdict(a){
+  if(a.register === "penny") return {
+    flag:"green", tone:"go", stamp:"$0.01", icon:"✓", label:"Green flag — confirmed",
+    note:"Confirmed at the register. Get the receipt in your hand, then match the other boxes before buying more."
+  };
+  if(a.register === "full") return {
+    flag:"red", tone:"stop", stamp:"RED", icon:"✕", label:"Red flag — rang full price",
+    note:"The register set the real price and it isn't a penny. Say you were price-checking, put it back, move on."
+  };
+  if(a.register === "stop") return {
+    flag:"red", tone:"stop", stamp:"RED", icon:"✕", label:"Red flag — stop-sale",
+    note:"A stop-sale is a hard block. Nobody can override it. Leave it and move on."
+  };
+  var score = 0;
+  CLUES.forEach(function(c){ if(a.clues && a.clues[c[0]]) score += c[3]; });
+  score += ENDING_SCORE[a.ending || ""] || 0;
+  var hasTag = a.clues && (a.clues.date || a.clues.was);
+  var pennyNote = (a.ending === "01") ? " Remember: a price ending in .01 is not a penny — $61.01 is sixty-one dollars." : "";
+  if(score >= 5 && hasTag) return {
+    flag:"green", tone:"go", stamp:"GREEN", icon:"✓", label:"Green flag — strong candidate",
+    note:"Enough clues stack up. Take ONE box to self-checkout and scan the box UPC (thumb over any QR). The register is the only real proof." + pennyNote
+  };
+  if(score >= 2) return {
+    flag:"yellow", tone:"hold", stamp:"YELLOW", icon:"?", label:"Yellow flag — keep digging",
+    note:(hasTag
+      ? "Some signals, not enough to call it. Check the HD app for availability and look for more clues before you commit."
+      : "Without a date AND a “was” price this isn't confirmed clearance. Re-read the tag before anything else.") + pennyNote
+  };
+  return {
+    flag:"red", tone:"stop", stamp:"RED", icon:"✕", label:"Red flag — no real signals",
+    note:"Nothing here says clearance. Regular stock or a promo tag. Move on and spend your time elsewhere." + pennyNote
+  };
+}
+function verdictOf(item){ return computeVerdict(item); }
 
-function renderTargets(){
-  var el = $("taglist");
-  if(!state.targets.length){
-    el.innerHTML = '<div class="empty">No targets yet. Add the item you\'re hunting, or scan a box to add it.</div>';
+/* ============================================================
+   RENDER — checked items
+   ============================================================ */
+function renderItems(){
+  var el = $("itemlist");
+  if(!state.items.length){
+    el.innerHTML = '<div class="empty">Nothing checked yet. Scan a box and the verdict lands here.</div>';
     renderTally(); return;
   }
   var html = "";
-  state.targets.forEach(function(t){
-    var v = t.verdict ? VERDICT[t.verdict] : null;
-    html += '<article class="tag' + (v ? " tag--done" : "") + '">';
-    html +=   '<div class="tag__eyebrow"><span>' + esc(t.aisle || "Location not set") + '</span>';
-    html +=   '<span>' + (v ? esc(v.label) : "Unchecked") + '</span></div>';
-    html +=   '<h3 class="tag__name">' + esc(t.name) + '</h3>';
-    if(t.model) html += '<div class="tag__model">MODEL ' + esc(t.model) + '</div>';
+  state.items.forEach(function(t){
+    var v = verdictOf(t);
+    html += '<article class="tag">';
+    html +=   '<div class="tag__eyebrow"><span>' + esc(v.label) + '</span>';
+    html +=   '<span>' + esc(t.notes ? "noted" : "") + '</span></div>';
+    html +=   '<h3 class="tag__name">' + esc(t.name || "Unnamed item") + '</h3>';
     html +=   '<div class="tag__grid">';
-    html +=     '<div><div class="tag__k">Store SKU</div><div class="tag__v">' + esc(t.sku || "—") + '</div></div>';
-    html +=     '<div><div class="tag__k">Internet #</div><div class="tag__v">' + esc(t.internet || "—") + '</div></div>';
     html +=     '<div style="grid-column:1/-1"><div class="tag__k">UPC</div><div class="tag__v">' +
-                  (t.upc ? esc(t.upc) : "not bound — scan to capture") + '</div></div>';
+                  (t.upc ? esc(normUPC(t.upc)) : "entered by hand") + '</div></div>';
     html +=   '</div>';
     if(t.upc){
       html += '<div class="tag__bars">' + barsFor(t.upc) + '</div>';
@@ -570,17 +652,12 @@ function renderTargets(){
     }
     if(t.notes) html += '<div class="tag__notes">' + esc(t.notes) + '</div>';
     html +=   '<div class="tag__acts">';
-    if(!v){
-      html +=   '<button class="btn btn--sm btn--go"   data-v="penny"   data-id="' + esc(t.id) + '">Pennied</button>';
-      html +=   '<button class="btn btn--sm btn--ghost" data-v="regular" data-id="' + esc(t.id) + '">Full price</button>';
-      html +=   '<button class="btn btn--sm btn--stop" data-v="stop"    data-id="' + esc(t.id) + '">Stop-sale</button>';
-      html +=   '<button class="btn btn--sm btn--ghost" data-v="missing" data-id="' + esc(t.id) + '">Not there</button>';
-    } else {
-      html +=   '<button class="btn btn--sm btn--ghost" data-v="clear" data-id="' + esc(t.id) + '">Undo result</button>';
+    html +=     '<button class="btn btn--sm btn--ghost" data-edit="' + esc(t.id) + '">Reassess</button>';
+    if(v.flag === "green" && t.upc){
+      html +=   '<button class="btn btn--sm btn--go" data-match="' + esc(t.id) + '">Match boxes</button>';
     }
-    html +=     '<button class="btn btn--sm btn--ghost" data-edit="' + esc(t.id) + '">Edit</button>';
     html +=   '</div>';
-    if(v) html += '<div class="tag__stamp tag__stamp--' + v.cls + '">' + esc(v.stamp) + '</div>';
+    html +=   '<div class="tag__stamp tag__stamp--' + v.tone + '">' + esc(v.stamp) + '</div>';
     html += '</article>';
   });
   el.innerHTML = html;
@@ -588,10 +665,12 @@ function renderTargets(){
 }
 
 function renderTally(){
-  var total = state.targets.length;
-  var done = state.targets.filter(function(t){ return !!t.verdict; }).length;
-  var hits = state.targets.filter(function(t){ return t.verdict === "penny"; }).length;
-  $("tally").innerHTML = done + "/" + total + " checked<br><b>" + hits + " pennied</b>";
+  var g = 0, y = 0, r = 0;
+  state.items.forEach(function(t){
+    var f = verdictOf(t).flag;
+    if(f === "green") g++; else if(f === "yellow") y++; else r++;
+  });
+  $("tally").innerHTML = state.items.length + " checked<br><b>" + g + " green</b> · " + y + " yellow · " + r + " red";
 }
 
 /* ============================================================
@@ -695,64 +774,46 @@ function onCode(code){
   var now = Date.now();
   if(code === lastCode && (now - lastAt) < 2200) return;
   lastCode = code; lastAt = now;
+  if($("sheet").classList.contains("is-on")){
+    $("f-upc").value = normUPC(code);
+    updateLive();
+    return;
+  }
   if(state.mode === "verify") handleVerify(code);
-  else handleLookup(code);
+  else handleAssess(code);
 }
 
 function findByUPC(code){
-  for(var i = 0; i < state.targets.length; i++){
-    if(sameUPC(state.targets[i].upc, code)) return state.targets[i];
+  for(var i = 0; i < state.items.length; i++){
+    if(sameUPC(state.items[i].upc, code)) return state.items[i];
   }
   return null;
 }
 
-function handleLookup(code){
+function handleAssess(code){
   var hit = findByUPC(code);
   if(hit){
-    beep("good");
-    var v = hit.verdict ? VERDICT[hit.verdict].label : "Not checked yet";
-    showRead("go","✓","On your list", hit.name, normUPC(code),
-      (hit.aisle ? hit.aisle + " · " : "") + v + (hit.notes ? " — " + hit.notes : ""),
-      [
-        { t:"Pennied",    c:"btn--go",    fn:function(){ setVerdict(hit.id,"penny"); } },
-        { t:"Full price", c:"btn--ghost", fn:function(){ setVerdict(hit.id,"regular"); } },
-        { t:"Match boxes to this", c:"btn--ghost", fn:function(){ setMode("verify", hit.id); } }
-      ]);
+    var v = verdictOf(hit);
+    beep(v.flag === "red" ? "bad" : "good");
+    var acts = [{ t:"Reassess", c:"btn--ghost", fn:function(){ openSheet(hit.id, null); } }];
+    if(v.flag === "green") acts.push({ t:"Match boxes to this", c:"btn--go", fn:function(){ setMode("verify", hit.id); } });
+    showRead(v.tone, v.icon, v.label, hit.name || "Checked item", normUPC(code), v.note, acts);
     return;
   }
-  var unbound = state.targets.filter(function(t){ return !t.upc; });
-  if(unbound.length){
-    beep("good");
-    var acts = unbound.slice(0,3).map(function(t){
-      return { t:"Bind to " + (t.model || t.name.slice(0,18)), c:"btn--tag", fn:function(){ bindUPC(t.id, code); } };
-    });
-    acts.push({ t:"Add as new", c:"btn--ghost", fn:function(){ openSheet(null, code); } });
-    showRead("hold","?","Unknown code","Not matched yet", normUPC(code),
-      "You have targets with no UPC on file. If this is the box in your hand, bind it — then every other box gets checked against it.", acts);
-    return;
-  }
-  beep("bad");
-  showRead("hold","?","Unknown code","Not on your list", normUPC(code),
-    "Nothing on your list uses this UPC.",
-    [{ t:"Add as a target", c:"btn--tag", fn:function(){ openSheet(null, code); } }]);
+  beep("good");
+  openSheet(null, code);
 }
 
 function handleVerify(code){
-  var ref = state.targets.filter(function(t){ return t.id === state.verifyId; })[0];
-  if(!ref){ setMode("lookup", null); return handleLookup(code); }
-  if(!ref.upc){
-    beep("good");
-    return showRead("hold","?","No reference yet", ref.name, normUPC(code),
-      "Bind this UPC as the reference, then scan the other boxes against it.",
-      [{ t:"Use this as the reference", c:"btn--tag", fn:function(){ bindUPC(ref.id, code); } }]);
-  }
+  var ref = state.items.filter(function(t){ return t.id === state.verifyId; })[0];
+  if(!ref || !ref.upc){ setMode("assess", null); return handleAssess(code); }
   if(sameUPC(ref.upc, code)){
     beep("good");
-    showRead("go","✓","Same UPC — take it", ref.name, normUPC(code),
+    showRead("go","✓","Same UPC — take it", ref.name || "Reference item", normUPC(code),
       "This box matches the one that rang up. Safe to add to the cart.", []);
   } else {
     beep("bad");
-    showRead("stop","✕","Different UPC — leave it", ref.name, normUPC(code),
+    showRead("stop","✕","Different UPC — leave it", ref.name || "Reference item", normUPC(code),
       "This is a different version of the same product. It will almost certainly ring full price. Reference is " + normUPC(ref.upc) + ".", []);
   }
 }
@@ -777,101 +838,116 @@ function showRead(tone, icon, label, name, code, note, acts){
   r.scrollIntoView({ behavior:"smooth", block:"nearest" });
 }
 
-/* ============================================================
-   MUTATIONS
-   ============================================================ */
-function setVerdict(id, v){
-  state.targets.forEach(function(t){ if(t.id === id) t.verdict = (v === "clear" ? null : v); });
-  save(); renderTargets();
-  var t2 = state.targets.filter(function(x){ return x.id === id; })[0];
-  if(v === "penny" && t2){
-    showRead("go","✓","Logged as pennied", t2.name, normUPC(t2.upc),
-      "Get the receipt in your hand before anything else. Then scan the remaining boxes in Match mode.",
-      [{ t:"Match the other boxes", c:"btn--tag", fn:function(){ setMode("verify", id); } }]);
-  } else {
-    $("read").className = "read is-hidden";
-  }
-}
-
-function bindUPC(id, code){
-  state.targets.forEach(function(t){ if(t.id === id) t.upc = normUPC(code); });
-  save(); renderTargets();
-  var t = state.targets.filter(function(x){ return x.id === id; })[0];
-  showRead("go","✓","UPC saved", t.name, normUPC(code),
-    "Locked in. Switch to Match mode and every other box gets checked against this one.",
-    [{ t:"Match boxes now", c:"btn--tag", fn:function(){ setMode("verify", id); } }]);
-}
-
 function setMode(m, id){
   state.mode = m;
   state.verifyId = id || null;
   lastCode = "";
-  $("mode-lookup").classList.toggle("is-on", m === "lookup");
+  $("mode-assess").classList.toggle("is-on", m === "assess");
   $("mode-verify").classList.toggle("is-on", m === "verify");
   if(m === "verify"){
-    var t = state.targets.filter(function(x){ return x.id === state.verifyId; })[0];
+    var t = state.items.filter(function(x){ return x.id === state.verifyId; })[0];
     $("modehint").textContent = t
-      ? "Checking every box against " + (t.model || t.name) + ". Green means take it."
-      : "Pick a target on the Targets tab, then scan boxes against it.";
+      ? "Checking every box against " + (t.name || "UPC " + normUPC(t.upc)) + ". Green means take it."
+      : "Get a green flag first, then match the other boxes against it.";
   } else {
-    $("modehint").textContent = "Scan any box to see if it's on your list.";
+    $("modehint").textContent = "Scan any box — answer a few clues and get a green, yellow, or red flag.";
   }
   go("scan");
 }
 
 /* ============================================================
-   SHEET
+   ASSESSMENT SHEET
    ============================================================ */
 var editingId = null;
+var sheetClues = {};
+var sheetReg = "";
+
+function renderClues(){
+  var html = "";
+  CLUES.forEach(function(c){
+    var on = !!sheetClues[c[0]];
+    html += '<button class="clue' + (c[4] ? " clue--bad" : "") + (on ? " is-on" : "") + '" data-clue="' + c[0] + '">';
+    html +=   '<span class="clue__box">✓</span>';
+    html +=   '<span>' + esc(c[1]) + '<span class="clue__sub">' + esc(c[2]) + '</span></span>';
+    html += '</button>';
+  });
+  $("cluelist").innerHTML = html;
+}
+
+function currentAssessment(){
+  return {
+    clues: sheetClues,
+    ending: $("f-ending").value,
+    register: sheetReg
+  };
+}
+
+function updateLive(){
+  var v = computeVerdict(currentAssessment());
+  $("liveV").className = "read read--" + v.tone;
+  $("liveIcon").textContent = v.icon;
+  $("liveLabel").textContent = v.label;
+  $("liveFlag").textContent = v.flag === "green" ? "Green flag" : v.flag === "yellow" ? "Yellow flag" : "Red flag";
+  $("liveNote").textContent = v.note;
+}
 
 function openSheet(id, prefillUPC){
   editingId = id || null;
-  var t = id ? state.targets.filter(function(x){ return x.id === id; })[0] : null;
-  $("sheetH").textContent = t ? "Edit target" : "Add a target";
-  $("f-name").value  = t ? t.name : "";
-  $("f-model").value = t ? t.model : "";
-  $("f-sku").value   = t ? t.sku : "";
-  $("f-upc").value   = t ? t.upc : (prefillUPC ? normUPC(prefillUPC) : "");
-  $("f-aisle").value = t ? t.aisle : "";
-  $("f-notes").value = t ? t.notes : "";
+  var t = id ? state.items.filter(function(x){ return x.id === id; })[0] : null;
+  $("sheetH").textContent = t ? "Reassess this item" : "Check this item";
+  $("f-name").value  = t ? (t.name || "") : "";
+  $("f-upc").value   = t ? (t.upc || "") : (prefillUPC ? normUPC(prefillUPC) : "");
+  $("f-notes").value = t ? (t.notes || "") : "";
+  $("f-ending").value = t ? (t.ending || "") : "";
+  sheetClues = t && t.clues ? JSON.parse(JSON.stringify(t.clues)) : {};
+  sheetReg = t ? (t.register || "") : "";
+  Array.prototype.forEach.call(document.querySelectorAll("#regseg .seg__b"), function(b){
+    b.classList.toggle("is-on", b.getAttribute("data-reg") === sheetReg);
+  });
+  renderClues();
+  updateLive();
   $("sheetDel").style.display = t ? "inline-flex" : "none";
   $("sheet").classList.add("is-on");
 }
 function closeSheet(){ $("sheet").classList.remove("is-on"); editingId = null; }
 
 function saveSheet(){
-  var name = $("f-name").value.trim();
-  if(!name){ $("f-name").focus(); return; }
   var data = {
-    name: name,
-    model: $("f-model").value.trim(),
-    sku: digitsOnly($("f-sku").value),
+    name: $("f-name").value.trim(),
     upc: normUPC($("f-upc").value),
-    aisle: $("f-aisle").value.trim(),
-    notes: $("f-notes").value.trim()
+    notes: $("f-notes").value.trim(),
+    clues: sheetClues,
+    ending: $("f-ending").value,
+    register: sheetReg
   };
+  var saved;
   if(editingId){
-    state.targets.forEach(function(t){ if(t.id === editingId){ for(var k in data) t[k] = data[k]; } });
+    state.items.forEach(function(t){ if(t.id === editingId){ for(var k in data) t[k] = data[k]; saved = t; } });
   } else {
-    data.id = "t-" + Date.now().toString(36);
-    data.internet = "";
-    data.verdict = null;
-    state.targets.push(data);
+    data.id = "i-" + Date.now().toString(36);
+    data.at = Date.now();
+    state.items.unshift(data);
+    saved = data;
   }
-  save(); renderTargets(); closeSheet();
+  save(); renderItems(); closeSheet();
+  var v = verdictOf(saved);
+  beep(v.flag === "red" ? "bad" : "good");
+  var acts = [{ t:"Reassess", c:"btn--ghost", fn:function(){ openSheet(saved.id, null); } }];
+  if(v.flag === "green" && saved.upc) acts.push({ t:"Match boxes to this", c:"btn--go", fn:function(){ setMode("verify", saved.id); } });
+  showRead(v.tone, v.icon, v.label, saved.name || "Checked item", normUPC(saved.upc), v.note, acts);
 }
 
 function delSheet(){
   if(!editingId) return;
-  state.targets = state.targets.filter(function(t){ return t.id !== editingId; });
-  save(); renderTargets(); closeSheet();
+  state.items = state.items.filter(function(t){ return t.id !== editingId; });
+  save(); renderItems(); closeSheet();
 }
 
 /* ============================================================
    NAV
    ============================================================ */
 function go(pane){
-  ["scan","targets","steps","flags"].forEach(function(p){
+  ["scan","checked","steps","flags"].forEach(function(p){
     $("pane-" + p).classList.toggle("is-on", p === pane);
   });
   Array.prototype.forEach.call(document.querySelectorAll(".tab"), function(b){
@@ -890,17 +966,21 @@ Array.prototype.forEach.call(document.querySelectorAll(".tab"), function(b){
 $("startbtn").addEventListener("click", startScan);
 $("stopbtn").addEventListener("click", stopScan);
 $("torchbtn").addEventListener("click", toggleTorch);
-$("mode-lookup").addEventListener("click", function(){ setMode("lookup", null); });
+$("mode-assess").addEventListener("click", function(){ setMode("assess", null); });
 $("mode-verify").addEventListener("click", function(){
-  var pick = state.verifyId || (state.targets.filter(function(t){ return t.upc; })[0] || {}).id || null;
+  var pick = state.verifyId;
+  if(!pick){
+    var greens = state.items.filter(function(t){ return t.upc && verdictOf(t).flag === "green"; });
+    pick = greens.length ? greens[0].id : null;
+  }
   setMode("verify", pick);
 });
 
-$("taglist").addEventListener("click", function(e){
+$("itemlist").addEventListener("click", function(e){
   var b = e.target.closest("button");
   if(!b) return;
-  if(b.hasAttribute("data-edit")) return openSheet(b.getAttribute("data-edit"), null);
-  if(b.hasAttribute("data-v")) return setVerdict(b.getAttribute("data-id"), b.getAttribute("data-v"));
+  if(b.hasAttribute("data-edit"))  return openSheet(b.getAttribute("data-edit"), null);
+  if(b.hasAttribute("data-match")) return setMode("verify", b.getAttribute("data-match"));
 });
 
 $("steplist").addEventListener("click", function(e){
@@ -928,6 +1008,27 @@ Array.prototype.forEach.call(document.querySelectorAll(".flagtab"), function(b){
   });
 });
 
+$("cluelist").addEventListener("click", function(e){
+  var b = e.target.closest(".clue");
+  if(!b) return;
+  var k = b.getAttribute("data-clue");
+  sheetClues[k] = !sheetClues[k];
+  b.classList.toggle("is-on", !!sheetClues[k]);
+  updateLive();
+});
+
+$("regseg").addEventListener("click", function(e){
+  var b = e.target.closest(".seg__b");
+  if(!b) return;
+  sheetReg = b.getAttribute("data-reg");
+  Array.prototype.forEach.call(document.querySelectorAll("#regseg .seg__b"), function(x){
+    x.classList.toggle("is-on", x === b);
+  });
+  updateLive();
+});
+
+$("f-ending").addEventListener("change", updateLive);
+
 $("addbtn").addEventListener("click", function(){ openSheet(null, null); });
 $("sheetX").addEventListener("click", closeSheet);
 $("sheetSave").addEventListener("click", saveSheet);
@@ -942,10 +1043,10 @@ document.addEventListener("visibilitychange", function(){
    BOOT
    ============================================================ */
 load();
-renderTargets();
+renderItems();
 renderSteps();
 renderFlags();
-setMode("lookup", null);
+setMode("assess", null);
 
 if("serviceWorker" in navigator){
   window.addEventListener("load", function(){
