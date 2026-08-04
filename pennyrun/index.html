@@ -281,6 +281,8 @@ input,select,textarea{font-family:inherit;font-size:16px}
   background:var(--paper);border:1px dashed var(--line);border-radius:8px;
   padding:8px 10px;margin:-3px 0 11px;
 }
+.linkbox{display:flex;gap:8px}
+.linkbox .field__i{flex:1;min-width:0}
 
 /* ---------- form ---------- */
 .field{margin-bottom:11px}
@@ -382,6 +384,13 @@ input,select,textarea{font-family:inherit;font-size:16px}
       <div class="read__acts" id="readActs"></div>
     </div>
   </div>
+
+  <p class="pane__title" style="margin-top:18px">Or start from a link</p>
+  <div class="linkbox">
+    <input class="field__i" id="linkin" placeholder="Paste a Home Depot share link">
+    <button class="btn btn--tag" id="linkgo">Read</button>
+  </div>
+  <p class="scan__hint">Share from the HD app straight to Penny Run, or paste the link here. Tap Read with the box empty to grab it from your clipboard.</p>
 </section>
 
 <!-- ============ CHECKED ============ -->
@@ -859,6 +868,66 @@ function openHD(upc){
   window.open("https://www.homedepot.com/s/" + encodeURIComponent(u), "_blank", "noopener");
 }
 
+/* ============================================================
+   LINK SCANNER — pull what a Home Depot share actually carries:
+   product name and internet # from the URL, and a price when the
+   share text includes one. The link is only an address, so store
+   availability still comes from the clue checklist.
+   ============================================================ */
+function parseHDShare(raw){
+  var t = String(raw || "");
+  var out = { name:"", internet:"", url:"", price:null, was:null };
+  var m = t.match(/https?:\/\/[^\s"']*homedepot\.com[^\s"']*/i);
+  if(m) out.url = m[0];
+  if(out.url){
+    m = out.url.match(/\/(\d{8,10})(?:[\/?#]|$)/);
+    if(m) out.internet = m[1];
+    m = out.url.match(/\/p\/([A-Za-z0-9][A-Za-z0-9-]*)\//);
+    if(m && !/^\d+$/.test(m[1])){
+      out.name = m[1].replace(/-/g, " ").replace(/\s+/g, " ").trim();
+    }
+  }
+  m = t.match(/was[^0-9$]{0,6}\$?\s*(\d{1,5}[.,]\d{2})/i);
+  if(m) out.was = parseFloat(m[1].replace(",", "."));
+  var re = /\$\s*(\d{1,5}[.,]\d{2})\b/g, mm;
+  while((mm = re.exec(t))){
+    var p = parseFloat(mm[1].replace(",", "."));
+    if(out.was !== null && p === out.was) continue;
+    if(out.price === null || p < out.price) out.price = p;
+  }
+  return out;
+}
+
+function endingFor(price){
+  if(price == null) return "";
+  if(Math.abs(price - 0.01) < 1e-9) return "penny";
+  var cents = Math.round(price * 100) % 100;
+  if(cents === 6) return "06";
+  if(cents === 3) return "03";
+  if(cents === 2) return "02";
+  if(cents === 1) return "01";
+  return "";
+}
+
+function handleHDShare(text){
+  var p = parseHDShare(text);
+  var bits = [];
+  if(p.name) bits.push(p.name);
+  if(p.internet) bits.push("Internet #" + p.internet);
+  if(p.price != null) bits.push("$" + p.price.toFixed(2));
+  if(p.was != null) bits.push("was $" + p.was.toFixed(2));
+  var vals = {
+    name: p.name || "",
+    notes: (p.internet ? "Internet # " + p.internet + "\n" : "") + (p.url || ""),
+    ocr: bits.length
+      ? "🔗 From link: " + bits.join(" · ") + " — add what you see on the shelf."
+      : "🔗 Couldn't read much from that link — fill it in by hand."
+  };
+  var ending = endingFor(p.price);
+  if(ending) vals.ending = ending;
+  openSheetWith(null, vals);
+}
+
 function showRead(tone, icon, label, name, code, note, acts){
   acts = (acts || []).slice();
   if(code) acts.push({ t:"Look up at HD ↗", c:"btn--ghost", fn:function(){ openHD(code); } });
@@ -942,14 +1011,7 @@ function applyTagRead(p){
   function money(n){ return "$" + n.toFixed(2); }
   if(p.now != null){
     bits.push(money(p.now));
-    if(Math.abs(p.now - 0.01) < 1e-9) ending = "penny";
-    else {
-      var cents = Math.round(p.now * 100) % 100;
-      if(cents === 6) ending = "06";
-      else if(cents === 3) ending = "03";
-      else if(cents === 2) ending = "02";
-      else if(cents === 1) ending = "01";
-    }
+    ending = endingFor(p.now);
   }
   if(p.was != null){ clues.was = true; bits.push("was " + money(p.was)); }
   if(p.date){ clues.date = true; bits.push("dated " + p.date); }
@@ -1205,6 +1267,20 @@ $("regseg").addEventListener("click", function(e){
 
 $("f-ending").addEventListener("change", updateLive);
 
+$("linkgo").addEventListener("click", function(){
+  var v = $("linkin").value.trim();
+  if(v){ $("linkin").value = ""; return handleHDShare(v); }
+  if(navigator.clipboard && navigator.clipboard.readText){
+    navigator.clipboard.readText().then(function(t){
+      if(t && /homedepot\.com/i.test(t)) handleHDShare(t);
+      else $("linkin").focus();
+    }).catch(function(){ $("linkin").focus(); });
+  } else $("linkin").focus();
+});
+$("linkin").addEventListener("keydown", function(e){
+  if(e.key === "Enter"){ e.preventDefault(); $("linkgo").click(); }
+});
+
 $("hdlook").addEventListener("click", function(){
   var u = normUPC($("f-upc").value);
   if(!u){ $("f-upc").focus(); return; }
@@ -1238,6 +1314,18 @@ renderItems();
 renderSteps();
 renderFlags();
 setMode("assess", null);
+
+/* Android share-target intake: the HD app's share lands here as
+   ?title=&text=&url= query params on the start URL. */
+(function(){
+  try{
+    var q = new URLSearchParams(location.search);
+    if(!(q.has("title") || q.has("text") || q.has("url"))) return;
+    var shared = [q.get("title"), q.get("text"), q.get("url")].filter(Boolean).join(" ");
+    history.replaceState(null, "", location.pathname);
+    if(/homedepot\.com/i.test(shared)) handleHDShare(shared);
+  }catch(e){}
+})();
 
 if("serviceWorker" in navigator){
   window.addEventListener("load", function(){
