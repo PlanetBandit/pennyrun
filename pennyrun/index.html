@@ -487,7 +487,7 @@ input,select,textarea{font-family:inherit;font-size:16px}
   <div class="flaglist is-on" data-f="go" id="flags-go"></div>
   <div class="flaglist" data-f="hold" id="flags-hold"></div>
   <div class="flaglist" data-f="stop" id="flags-stop"></div>
-  <p class="scan__hint" style="text-align:center;margin-top:16px">Penny Run · build v19</p>
+  <p class="scan__hint" style="text-align:center;margin-top:16px">Penny Run · build v20</p>
 </section>
 
 <!-- ============ ASSESSMENT SHEET ============ -->
@@ -502,6 +502,7 @@ input,select,textarea{font-family:inherit;font-size:16px}
           <div class="read__label" id="liveLabel"></div>
           <p class="read__name" id="liveFlag"></p>
         </div>
+        <button class="btn btn--sm btn--tag" id="liveSave">Save ✓</button>
       </div>
       <div class="read__body">
         <p class="read__note" id="liveNote" style="margin-bottom:0"></p>
@@ -969,6 +970,22 @@ function flashStage(v){
   flashTimer = setTimeout(function(){ f.className = "flash"; }, 1500);
 }
 
+/* The lookup sets a short-lived beacon; a share arriving while it
+   is lit merges into this item instead of creating a new one. */
+function armMerge(id){
+  try{ localStorage.setItem("pennyrun.merge", JSON.stringify({ id: id, at: Date.now() })); }catch(e){}
+}
+function consumeMergeTarget(){
+  var id = null;
+  try{
+    var m = JSON.parse(localStorage.getItem("pennyrun.merge") || "null");
+    if(m && m.id && (Date.now() - m.at) < 900000) id = m.id;
+    localStorage.removeItem("pennyrun.merge");
+  }catch(e){}
+  if(!id) return null;
+  return state.items.filter(function(t){ return t.id === id; })[0] || null;
+}
+
 function announceVerdict(item, read){
   var v = verdictOf(item);
   beep(v.flag === "red" ? "bad" : "good");
@@ -980,6 +997,12 @@ function announceVerdict(item, read){
   ];
   if(v.flag === "green" && item.upc){
     acts.push({ t:"Match boxes", c:"btn--ghost", fn:function(){ setMode("verify", item.id); } });
+  }
+  if(item.upc){
+    acts.push({ t:"Look up at HD ↗", c:"btn--ghost", fn:function(){
+      armMerge(item.id);
+      openHD(item.upc);
+    }});
   }
   var note = (read && read.summary ? read.summary + " " : "") + v.note;
   showRead(v.tone, v.icon, v.label, item.name || "Scanned item", normUPC(item.upc), note, acts);
@@ -1202,12 +1225,33 @@ function handleHDShare(text){
   if(Object.keys(read.clues).length) vals.clues = read.clues;
   var ending = read.ending || endingFor(p.price);
   if(ending) vals.ending = ending;
+
+  /* a scan armed the merge beacon — fold this share into that item */
+  var target = consumeMergeTarget();
+  if(target){
+    if(vals.name && !target.name) target.name = vals.name;
+    if(vals.notes){
+      vals.notes.split("\n").forEach(function(line){
+        if(line && (target.notes || "").indexOf(line) === -1){
+          target.notes = (target.notes ? target.notes + "\n" : "") + line;
+        }
+      });
+    }
+    target.clues = target.clues || {};
+    for(var k in read.clues){ if(read.clues[k]) target.clues[k] = true; }
+    if(ending && !target.ending) target.ending = ending;
+    save(); renderItems();
+    announceVerdict(target, { summary: (vals.ocr || "").replace("add what you see on the shelf.", "merged into your scan.") });
+    return;
+  }
+
   openSheetWith(null, vals);
 }
 
 function showRead(tone, icon, label, name, code, note, acts){
   acts = (acts || []).slice();
-  if(code) acts.push({ t:"Look up at HD ↗", c:"btn--ghost", fn:function(){ openHD(code); } });
+  var hasLookup = acts.some(function(a){ return /Look up/.test(a.t); });
+  if(code && !hasLookup) acts.push({ t:"Look up at HD ↗", c:"btn--ghost", fn:function(){ openHD(code); } });
   var r = $("read");
   r.className = "read read--" + tone;
   $("readIcon").textContent = icon;
@@ -1719,6 +1763,8 @@ $("sheetSnap").addEventListener("click", function(){
   if(!running) startScan();
   enterTagPhase();
 });
+
+$("liveSave").addEventListener("click", saveSheet);
 
 $("addbtn").addEventListener("click", function(){ openSheet(null, null); });
 $("sheetX").addEventListener("click", closeSheet);
