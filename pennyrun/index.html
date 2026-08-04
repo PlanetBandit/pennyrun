@@ -470,7 +470,7 @@ input,select,textarea{font-family:inherit;font-size:16px}
   <div class="flaglist is-on" data-f="go" id="flags-go"></div>
   <div class="flaglist" data-f="hold" id="flags-hold"></div>
   <div class="flaglist" data-f="stop" id="flags-stop"></div>
-  <p class="scan__hint" style="text-align:center;margin-top:16px">Penny Run · build v12</p>
+  <p class="scan__hint" style="text-align:center;margin-top:16px">Penny Run · build v13</p>
 </section>
 
 <!-- ============ ASSESSMENT SHEET ============ -->
@@ -997,17 +997,27 @@ function parseAppShot(raw){
     else if(mm[2]) v = parseFloat(mm[1] + "." + mm[2]); /* "$4 50" superscript cents */
     if(v != null && v > 0) prices.push(v);
   }
-  var cands = prices.filter(function(p){ return p !== out.online && p !== out.saveAmt; });
-  if(out.online != null && out.saveAmt != null){
-    var derived = Math.round((out.online - out.saveAmt) * 100) / 100;
-    var hit = cands.filter(function(p){ return Math.abs(p - derived) < 0.011; });
-    out.store = hit.length ? hit[0] : derived;
+  m = t.match(/was[^0-9$]{0,6}\$?\s*(\d{1,5}[.,]\d{2})/i);
+  var wasP = m ? parseFloat(m[1].replace(",", ".")) : null;
+  var base = out.online != null ? out.online : wasP;
+  /* drop the reference price and anything that is really the
+     savings amount, not a price ($88.28 on a "was $441.36 (20%)" tag) */
+  var cands = prices.filter(function(p){
+    if(p === out.online || p === out.saveAmt || (wasP != null && p === wasP)) return false;
+    if(base != null && out.savePct != null && Math.abs(p - base * out.savePct / 100) <= 0.02) return false;
+    if(base != null && out.saveAmt != null && Math.abs(p - out.saveAmt) <= 0.02) return false;
+    return true;
+  });
+  if(cands.length){
+    out.store = Math.min.apply(null, cands);
+    if(out.online == null) out.online = (cands.length > 1) ? Math.max.apply(null, cands) : wasP;
+    if(out.online === out.store) out.online = wasP != null ? wasP : out.online;
+  } else if(out.online != null && out.saveAmt != null){
+    out.store = Math.round((out.online - out.saveAmt) * 100) / 100;
   } else if(out.online != null && out.savePct != null){
     out.store = Math.round(out.online * (100 - out.savePct)) / 100;
-  } else if(cands.length){
-    out.store = Math.min.apply(null, cands);
-    if(out.online == null && cands.length > 1) out.online = Math.max.apply(null, cands);
   }
+  if(out.online == null && wasP != null) out.online = wasP;
   if(out.savePct == null && out.online != null && out.store != null && out.online > 0){
     out.savePct = Math.round((1 - out.store / out.online) * 100);
   }
@@ -1055,7 +1065,7 @@ function handleHDShare(text){
   if(p.internet) bits.push("Internet #" + p.internet);
   if(p.was != null) bits.push("was $" + p.was.toFixed(2));
   bits = bits.concat(read.bits);
-  if(p.price != null && read.bits.indexOf("$" + p.price.toFixed(2)) === -1) bits.push("$" + p.price.toFixed(2));
+  if(p.price != null && read.bits.length === 0) bits.push("$" + p.price.toFixed(2));
   var vals = {
     name: p.name || "",
     notes: (p.internet ? "Internet # " + p.internet + "\n" : "") + (p.url || ""),
@@ -1562,9 +1572,18 @@ setMode("assess", null);
   /* strip stray [ ] — a hand-built shortcut sometimes keeps the
      placeholder brackets around its variables */
   var shared = [q.get("title"), q.get("text"), q.get("url")].filter(Boolean).join(" ").replace(/[\[\]]/g, " ");
+  /* shortcut payloads can arrive encoded more than once */
+  for(var i = 0; i < 3 && /%[0-9A-Fa-f]{2}/.test(shared); i++){
+    try{
+      var dec = decodeURIComponent(shared);
+      if(dec === shared) break;
+      shared = dec;
+    }catch(e){ break; }
+  }
   history.replaceState(null, "", location.pathname);
   try{
-    if(/homedepot\.com/i.test(shared)){
+    if(/homedepot\.com/i.test(shared) ||
+       /\$\s*\d|"price"|clearance|OUT_OF_STOCK|LIMITED_STOCK|BACKORDERED/i.test(shared)){
       handleHDShare(shared);
     } else {
       showRead("hold", "?", "Share arrived — no HD link in it", "Nothing to parse", "",
