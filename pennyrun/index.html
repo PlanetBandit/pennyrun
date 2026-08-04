@@ -486,7 +486,7 @@ input,select,textarea{font-family:inherit;font-size:16px}
   <div class="flaglist is-on" data-f="go" id="flags-go"></div>
   <div class="flaglist" data-f="hold" id="flags-hold"></div>
   <div class="flaglist" data-f="stop" id="flags-stop"></div>
-  <p class="scan__hint" style="text-align:center;margin-top:16px">Penny Run · build v15</p>
+  <p class="scan__hint" style="text-align:center;margin-top:16px">Penny Run · build v16</p>
 </section>
 
 <!-- ============ ASSESSMENT SHEET ============ -->
@@ -1007,6 +1007,14 @@ function quickSave(pr, read){
   item.clues = clues;
   if(read && read.ending) item.ending = read.ending;
   else if(vals.ending) item.ending = vals.ending;
+  if(read && read.name && !item.name) item.name = read.name;
+  if(read && (read.sku || read.model)){
+    var extra = [read.model ? "MODEL " + read.model : "", read.sku ? "SKU " + read.sku : ""]
+      .filter(Boolean).join(" · ");
+    if(extra && (item.notes || "").indexOf(extra) === -1){
+      item.notes = (item.notes ? item.notes + "\n" : "") + extra;
+    }
+  }
   save(); renderItems();
   announceVerdict(item, read);
 }
@@ -1081,7 +1089,8 @@ function endingFor(price){
    ============================================================ */
 function parseAppShot(raw){
   var t = String(raw || "");
-  var out = { clearance:false, gone:false, online:null, savePct:null, saveAmt:null, store:null };
+  var out = { clearance:false, gone:false, online:null, savePct:null, saveAmt:null, store:null,
+              name: guessName(t), model: guessModel(t) };
   if(/in[\s-]*store\s+clearance/i.test(t) || /clearance\s+(item|price)/i.test(t)) out.clearance = true;
   /* fields the iPhone shortcut lifts out of the fetched page */
   if(/"clearance"\s*:\s*\{/.test(t)) out.clearance = true;
@@ -1139,7 +1148,8 @@ function applyAppShot(p){
   var summary = bits.length
     ? "📸 App read: " + bits.join(" · ") + " — double-check, then add the shelf clues."
     : "📸 Couldn't find prices in that screenshot — fill it in by hand.";
-  return { clues: clues, ending: ending, summary: summary, bits: bits };
+  return { clues: clues, ending: ending, summary: summary, bits: bits,
+           name: p.name || "", model: p.model || "", sku: "" };
 }
 
 function readShotFile(file){
@@ -1172,7 +1182,7 @@ function handleHDShare(text){
   bits = bits.concat(read.bits);
   if(p.price != null && read.bits.length === 0) bits.push("$" + p.price.toFixed(2));
   var vals = {
-    name: p.name || "",
+    name: p.name || read.name || "",
     notes: (p.internet ? "Internet # " + p.internet + "\n" : "") + (p.url || ""),
     ocr: bits.length
       ? "🔗 From link: " + bits.join(" · ") + (read.bits.length
@@ -1247,10 +1257,38 @@ function initOCR(){
   return ocrPromise;
 }
 
+/* Best guess at a product name from OCR text: the longest mostly-
+   letters line that isn't a price, a label, or boilerplate. */
+function guessName(text){
+  var best = "";
+  String(text || "").split(/\n+/).forEach(function(line){
+    var t = line.trim().replace(/\s+/g, " ");
+    if(t.length < 8 || t.length > 90) return;
+    if(/[$]|\d{5,}/.test(t)) return;
+    if(/\b(clearance|online|price|save|was|now|sku|model|store|visit|purchase|supplies|pickup|delivery|cart|questions|answers|per|each)\b/i.test(t)) return;
+    var letters = (t.match(/[A-Za-z]/g) || []).length;
+    if(letters / t.length < 0.6) return;
+    if(t.length > best.length) best = t;
+  });
+  return best;
+}
+
+/* Model numbers look like BALCST-048 / PCL206K1; store SKUs are
+   standalone 6-digit runs (word boundaries keep UPCs out). */
+function guessModel(text){
+  var m = String(text || "").match(/\b[A-Z]{2,}[-_]?[0-9][A-Z0-9_-]{1,}\b/);
+  return m ? m[0] : "";
+}
+function guessSKU(text){
+  var m = String(text || "").match(/\b(\d{6})\b/);
+  return m ? m[1] : "";
+}
+
 /* Pull the useful facts out of whatever the OCR saw. */
 function parseTag(text){
   var t = String(text || "");
-  var out = { now:null, was:null, date:null, prices:[] };
+  var out = { now:null, was:null, date:null, prices:[],
+              name: guessName(t), model: guessModel(t), sku: guessSKU(t) };
   var m = t.match(/\b\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4}\b/);
   if(m) out.date = m[0];
   m = t.match(/was[^0-9$]{0,6}\$?\s*(\d{1,4}[.,]\d{2})/i);
@@ -1274,10 +1312,13 @@ function applyTagRead(p){
   if(p.was != null){ clues.was = true; bits.push("was " + money(p.was)); }
   if(p.date){ clues.date = true; bits.push("dated " + p.date); }
   if(p.was != null && p.now != null && p.was > 0 && p.now <= p.was * 0.3) clues.deep = true;
+  if(p.model) bits.push(p.model);
+  if(p.sku) bits.push("SKU " + p.sku);
   var summary = bits.length
     ? "📷 Tag read: " + bits.join(" · ") + " — double-check, then fix anything it misread."
     : "📷 Couldn't find a price or date in that frame — fill the clues by hand.";
-  return { clues: clues, ending: ending, summary: summary };
+  return { clues: clues, ending: ending, summary: summary,
+           name: p.name || "", model: p.model || "", sku: p.sku || "" };
 }
 
 function enterTagPhase(){
@@ -1327,6 +1368,7 @@ function resumeSheet(read){
     vals.clues = vals.clues || {};
     for(var k in read.clues){ if(read.clues[k]) vals.clues[k] = true; }
     if(read.ending) vals.ending = read.ending;
+    if(read.name && !vals.name) vals.name = read.name;
     vals.ocr = read.summary;
   }
   openSheetWith(pr.id, vals);
