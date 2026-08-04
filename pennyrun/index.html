@@ -501,7 +501,7 @@ input,select,textarea{font-family:inherit;font-size:16px}
   <div class="flaglist is-on" data-f="go" id="flags-go"></div>
   <div class="flaglist" data-f="hold" id="flags-hold"></div>
   <div class="flaglist" data-f="stop" id="flags-stop"></div>
-  <p class="scan__hint" style="text-align:center;margin-top:16px">Penny Run · build v23</p>
+  <p class="scan__hint" style="text-align:center;margin-top:16px">Penny Run · build v24</p>
 </section>
 
 <!-- ============ ASSESSMENT SHEET ============ -->
@@ -1089,7 +1089,7 @@ function parseHDShare(raw){
   var t = String(raw || "");
   var out = { name:"", internet:"", url:"", price:null, was:null };
   var m = t.match(/https?:\/\/[^\s"']*homedepot\.com[^\s"']*/i);
-  if(m) out.url = m[0];
+  if(m) out.url = m[0].replace(/[)\],.;!?]+$/, "");
   if(out.url){
     m = out.url.match(/\/(\d{8,10})(?:[\/?#]|$)/);
     if(m) out.internet = m[1];
@@ -1438,8 +1438,10 @@ function resumeSheet(read){
     for(var k in read.clues){ if(read.clues[k]) vals.clues[k] = true; }
     if(read.ending) vals.ending = read.ending;
     if(read.name && !vals.name) vals.name = read.name;
-    if(read.aisle && (vals.notes || "").indexOf(read.aisle) === -1){
-      vals.notes = (vals.notes ? vals.notes + "\n" : "") + read.aisle;
+    var extra = [read.aisle || "", read.model ? "MODEL " + read.model : "", read.sku ? "SKU " + read.sku : ""]
+      .filter(Boolean).join(" · ");
+    if(extra && (vals.notes || "").indexOf(extra) === -1){
+      vals.notes = (vals.notes ? vals.notes + "\n" : "") + extra;
     }
     vals.ocr = read.summary;
   }
@@ -1531,6 +1533,7 @@ function collectSheet(){
 }
 
 function saveSheet(){
+  if(!$("sheet").classList.contains("is-on")) return; /* guards a double-fired tap */
   var data = {
     name: $("f-name").value.trim(),
     upc: normUPC($("f-upc").value),
@@ -1540,6 +1543,16 @@ function saveSheet(){
     register: sheetReg
   };
   var saved;
+  if(!editingId){
+    /* a wholly empty sheet saves nothing */
+    var hasClue = Object.keys(sheetClues).some(function(k){ return sheetClues[k]; });
+    if(!data.name && !data.upc && !data.notes && !data.ending && !data.register && !hasClue){
+      closeSheet(); return;
+    }
+    /* saving a UPC that's already on file updates that item */
+    var dupe = data.upc ? findByUPC(data.upc) : null;
+    if(dupe) editingId = dupe.id;
+  }
   if(editingId){
     state.items.forEach(function(t){ if(t.id === editingId){ for(var k in data) t[k] = data[k]; saved = t; } });
   } else {
@@ -1766,6 +1779,7 @@ $("linkin").addEventListener("keydown", function(e){
 $("hdlook").addEventListener("click", function(){
   var u = normUPC($("f-upc").value);
   if(!u){ $("f-upc").focus(); return; }
+  if(editingId) armMerge(editingId); /* a share coming back merges into this item */
   openHD(u);
 });
 
