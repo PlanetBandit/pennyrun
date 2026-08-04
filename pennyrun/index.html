@@ -1,0 +1,957 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<title>Penny Run</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#14161A">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="Penny Run">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<style>
+/* ============================================================
+   PENNY RUN — shelf-tag visual system
+   Palette is drawn from the store itself: polished concrete
+   floor, clearance-tag yellow, hardware orange, signal colors.
+   All type is system-stack so the app needs zero network.
+   ============================================================ */
+:root{
+  --concrete:#E4E2DC;
+  --paper:#FFFFFF;
+  --ink:#14161A;
+  --mute:#6E6C66;
+  --line:#C9C6BE;
+  --tag:#FFD400;
+  --tag-edge:#D9B200;
+  --orange:#D9531E;
+  --go:#1B6E42;
+  --go-bg:#E2F0E7;
+  --hold:#9A6B00;
+  --hold-bg:#FBF0D6;
+  --stop:#B32218;
+  --stop-bg:#F8E2E0;
+  --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+  --tabh:64px;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;padding:0}
+body{
+  background:var(--concrete);
+  color:var(--ink);
+  font-family:var(--sans);
+  font-size:16px;
+  line-height:1.45;
+  -webkit-font-smoothing:antialiased;
+  padding-bottom:calc(var(--tabh) + env(safe-area-inset-bottom));
+}
+button{font-family:inherit;font-size:inherit;cursor:pointer;border:none;background:none;color:inherit}
+input,select,textarea{font-family:inherit;font-size:16px}
+
+/* ---------- header ---------- */
+.hdr{
+  position:sticky;top:0;z-index:40;
+  background:var(--ink);color:#fff;
+  padding:calc(env(safe-area-inset-top) + 10px) 16px 10px;
+  display:flex;align-items:center;justify-content:space-between;gap:12px;
+}
+.hdr__mark{
+  font-family:var(--sans);font-weight:800;font-size:15px;
+  letter-spacing:.16em;text-transform:uppercase;
+}
+.hdr__mark span{color:var(--tag)}
+.hdr__tally{font-family:var(--mono);font-size:12px;color:#A9A69E;text-align:right;line-height:1.3}
+.hdr__tally b{color:var(--tag);font-weight:700}
+
+/* ---------- panes ---------- */
+.pane{display:none;padding:16px 16px 24px}
+.pane.is-on{display:block}
+.pane__title{
+  font-size:12px;font-weight:800;letter-spacing:.15em;text-transform:uppercase;
+  color:var(--mute);margin:0 0 12px;
+}
+
+/* ---------- scanner ---------- */
+.scan__stage{
+  position:relative;width:100%;aspect-ratio:3/4;max-height:52vh;
+  background:#0C0D10;border-radius:14px;overflow:hidden;
+  display:flex;align-items:center;justify-content:center;
+}
+.scan__video{width:100%;height:100%;object-fit:cover;display:block}
+.scan__idle{
+  position:absolute;inset:0;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:14px;padding:24px;text-align:center;
+  color:#8E8B84;font-size:14px;
+}
+.scan__reticle{
+  position:absolute;left:8%;right:8%;top:50%;transform:translateY(-50%);
+  height:34%;border:2px solid rgba(255,212,0,.9);border-radius:8px;
+  box-shadow:0 0 0 100vmax rgba(0,0,0,.42);pointer-events:none;
+}
+.scan__laser{
+  position:absolute;left:0;right:0;top:50%;height:2px;background:var(--orange);
+  box-shadow:0 0 8px var(--orange);animation:sweep 2.1s ease-in-out infinite;
+}
+@keyframes sweep{0%,100%{top:6%}50%{top:94%}}
+.scan__tools{position:absolute;right:10px;bottom:10px;display:flex;flex-direction:column;gap:8px}
+.scan__tool{
+  width:44px;height:44px;border-radius:50%;background:rgba(20,22,26,.72);
+  color:#fff;font-size:18px;display:flex;align-items:center;justify-content:center;
+  border:1px solid rgba(255,255,255,.18);
+}
+.scan__tool.is-on{background:var(--tag);color:var(--ink);border-color:var(--tag)}
+.scan__bar{display:flex;gap:8px;margin-top:12px}
+.scan__mode{
+  flex:1;padding:11px 8px;border-radius:10px;background:var(--paper);
+  border:1px solid var(--line);font-size:12px;font-weight:700;
+  letter-spacing:.08em;text-transform:uppercase;color:var(--mute);
+}
+.scan__mode.is-on{background:var(--ink);color:#fff;border-color:var(--ink)}
+.scan__hint{font-size:13px;color:var(--mute);margin:10px 2px 0}
+
+/* ---------- verdict readout ---------- */
+.read{
+  margin-top:14px;border-radius:14px;overflow:hidden;
+  border:1px solid var(--line);background:var(--paper);
+}
+.read.is-hidden{display:none}
+.read__top{padding:14px 16px;display:flex;align-items:flex-start;gap:12px}
+.read__icon{
+  width:38px;height:38px;flex:none;border-radius:9px;
+  display:flex;align-items:center;justify-content:center;
+  font-size:19px;font-weight:800;
+}
+.read__label{font-size:11px;font-weight:800;letter-spacing:.14em;text-transform:uppercase}
+.read__name{font-size:17px;font-weight:700;margin:2px 0 0;line-height:1.25}
+.read__code{font-family:var(--mono);font-size:12px;color:var(--mute);margin-top:4px;word-break:break-all}
+.read--go{background:var(--go-bg)}
+.read--go .read__icon{background:var(--go);color:#fff}
+.read--go .read__label{color:var(--go)}
+.read--hold{background:var(--hold-bg)}
+.read--hold .read__icon{background:var(--hold);color:#fff}
+.read--hold .read__label{color:var(--hold)}
+.read--stop{background:var(--stop-bg)}
+.read--stop .read__icon{background:var(--stop);color:#fff}
+.read--stop .read__label{color:var(--stop)}
+.read__body{padding:0 16px 14px}
+.read__note{font-size:14px;margin:0 0 10px}
+.read__acts{display:flex;flex-wrap:wrap;gap:8px}
+
+/* ---------- buttons ---------- */
+.btn{
+  padding:12px 14px;border-radius:10px;font-size:14px;font-weight:700;
+  border:1px solid var(--ink);background:var(--ink);color:#fff;
+  min-height:44px;display:inline-flex;align-items:center;justify-content:center;gap:6px;
+}
+.btn--ghost{background:transparent;color:var(--ink)}
+.btn--tag{background:var(--tag);border-color:var(--tag-edge);color:var(--ink)}
+.btn--go{background:var(--go);border-color:var(--go);color:#fff}
+.btn--stop{background:var(--stop);border-color:var(--stop);color:#fff}
+.btn--wide{width:100%}
+.btn--sm{padding:9px 11px;font-size:13px;min-height:38px}
+.btn:disabled{opacity:.4}
+
+/* ---------- shelf tag (signature element) ---------- */
+.tag{
+  position:relative;background:var(--tag);border-radius:4px;
+  border:1px solid var(--tag-edge);
+  box-shadow:0 1px 0 rgba(0,0,0,.16),0 6px 14px -8px rgba(0,0,0,.4);
+  padding:12px 14px 10px;margin-bottom:14px;overflow:hidden;
+}
+.tag::after{
+  content:"";position:absolute;left:0;right:0;bottom:0;height:5px;
+  background:repeating-linear-gradient(90deg,var(--ink) 0 6px,transparent 6px 12px);
+  opacity:.22;
+}
+.tag--done{background:#EFEDE6;border-color:var(--line)}
+.tag__eyebrow{
+  font-size:10px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;
+  color:rgba(20,22,26,.62);display:flex;justify-content:space-between;gap:8px;
+}
+.tag__name{font-size:17px;font-weight:800;line-height:1.2;margin:5px 0 2px}
+.tag__model{font-family:var(--mono);font-size:12px;font-weight:600}
+.tag__grid{
+  display:grid;grid-template-columns:1fr 1fr;gap:2px 14px;margin-top:9px;
+  font-family:var(--mono);font-size:11px;
+}
+.tag__k{color:rgba(20,22,26,.58);text-transform:uppercase;letter-spacing:.06em}
+.tag__v{font-weight:700;word-break:break-all}
+.tag__bars{display:flex;align-items:flex-end;gap:1px;height:34px;margin-top:10px}
+.tag__bar{background:var(--ink);width:2px;border-radius:.5px}
+.tag__digits{
+  font-family:var(--mono);font-size:11px;letter-spacing:.28em;
+  margin-top:3px;color:rgba(20,22,26,.7);
+}
+.tag__acts{display:flex;flex-wrap:wrap;gap:6px;margin-top:11px;position:relative;z-index:2}
+.tag__stamp{
+  position:absolute;right:10px;top:34px;transform:rotate(-13deg);
+  font-family:var(--mono);font-size:24px;font-weight:800;letter-spacing:.04em;
+  padding:5px 12px;border:3px solid currentColor;border-radius:5px;
+  opacity:.88;pointer-events:none;animation:stamp .22s ease-out;
+}
+@keyframes stamp{from{transform:rotate(-13deg) scale(1.7);opacity:0}to{transform:rotate(-13deg) scale(1);opacity:.88}}
+.tag__stamp--penny{color:var(--go)}
+.tag__stamp--regular{color:var(--mute)}
+.tag__stamp--stop{color:var(--stop)}
+.tag__stamp--missing{color:var(--mute)}
+.tag__notes{
+  font-size:13px;margin-top:9px;padding-top:9px;
+  border-top:1px dashed rgba(20,22,26,.28);
+}
+
+/* ---------- steps ---------- */
+.step{
+  display:flex;gap:12px;align-items:flex-start;background:var(--paper);
+  border:1px solid var(--line);border-radius:12px;padding:13px 14px;margin-bottom:9px;
+  text-align:left;width:100%;
+}
+.step.is-done{background:transparent;border-style:dashed;opacity:.6}
+.step.is-done .step__text{text-decoration:line-through}
+.step__num{
+  width:27px;height:27px;flex:none;border-radius:50%;background:var(--ink);color:#fff;
+  font-family:var(--mono);font-size:12px;font-weight:700;
+  display:flex;align-items:center;justify-content:center;
+}
+.step.is-done .step__num{background:var(--go)}
+.step__text{font-size:14.5px;line-height:1.4}
+.step__sub{display:block;font-size:12.5px;color:var(--mute);margin-top:3px}
+
+/* ---------- flags ---------- */
+.flagtabs{display:flex;gap:8px;margin-bottom:14px}
+.flagtab{
+  flex:1;padding:11px 6px;border-radius:10px;border:1px solid var(--line);
+  background:var(--paper);font-size:12px;font-weight:800;
+  letter-spacing:.07em;text-transform:uppercase;color:var(--mute);
+}
+.flagtab.is-on[data-f="go"]{background:var(--go);border-color:var(--go);color:#fff}
+.flagtab.is-on[data-f="hold"]{background:var(--hold);border-color:var(--hold);color:#fff}
+.flagtab.is-on[data-f="stop"]{background:var(--stop);border-color:var(--stop);color:#fff}
+.flaglist{display:none}
+.flaglist.is-on{display:block}
+.flagitem{
+  background:var(--paper);border:1px solid var(--line);border-radius:12px;
+  padding:13px 14px;margin-bottom:9px;font-size:14.5px;line-height:1.45;
+  border-left-width:5px;
+}
+.flaglist[data-f="go"] .flagitem{border-left-color:var(--go)}
+.flaglist[data-f="hold"] .flagitem{border-left-color:var(--hold)}
+.flaglist[data-f="stop"] .flagitem{border-left-color:var(--stop)}
+.flagitem b{display:block;margin-bottom:3px}
+
+/* ---------- form ---------- */
+.field{margin-bottom:11px}
+.field__l{
+  display:block;font-size:11px;font-weight:800;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--mute);margin-bottom:5px;
+}
+.field__i{
+  width:100%;padding:12px;border:1px solid var(--line);border-radius:10px;
+  background:var(--paper);color:var(--ink);
+}
+.field__i--mono{font-family:var(--mono)}
+
+/* ---------- sheet ---------- */
+.sheet{
+  position:fixed;inset:0;z-index:60;background:rgba(20,22,26,.55);
+  display:none;align-items:flex-end;
+}
+.sheet.is-on{display:flex}
+.sheet__card{
+  background:var(--concrete);width:100%;max-height:88vh;overflow-y:auto;
+  border-radius:16px 16px 0 0;padding:18px 16px calc(18px + env(safe-area-inset-bottom));
+}
+.sheet__h{font-size:17px;font-weight:800;margin:0 0 14px}
+
+/* ---------- tab bar ---------- */
+.tabs{
+  position:fixed;left:0;right:0;bottom:0;z-index:50;display:flex;
+  background:var(--ink);padding-bottom:env(safe-area-inset-bottom);
+}
+.tab{
+  flex:1;height:var(--tabh);color:#83807A;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:3px;
+  font-size:10px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;
+}
+.tab.is-on{color:var(--tag)}
+.tab__g{font-size:19px;line-height:1}
+.empty{
+  text-align:center;color:var(--mute);font-size:14px;
+  padding:30px 16px;border:1px dashed var(--line);border-radius:12px;
+}
+.warn{
+  background:var(--hold-bg);border:1px solid #E3CE93;border-left:5px solid var(--hold);
+  border-radius:10px;padding:12px 13px;font-size:13.5px;line-height:1.45;margin-bottom:14px;
+}
+@media(prefers-reduced-motion:reduce){
+  .scan__laser{animation:none;top:50%}
+  .tag__stamp{animation:none}
+}
+</style>
+</head>
+<body>
+
+<header class="hdr">
+  <div class="hdr__mark">Penny<span>·</span>Run</div>
+  <div class="hdr__tally" id="tally">—</div>
+</header>
+
+<!-- ============ SCAN ============ -->
+<section class="pane is-on" id="pane-scan">
+  <div class="scan__bar">
+    <button class="scan__mode is-on" data-mode="lookup" id="mode-lookup">Look up</button>
+    <button class="scan__mode" data-mode="verify" id="mode-verify">Match boxes</button>
+  </div>
+  <p class="scan__hint" id="modehint">Scan any box to see if it's on your list.</p>
+
+  <div class="scan__stage" id="stage">
+    <video class="scan__video" id="video" playsinline muted></video>
+    <div class="scan__idle" id="idle">
+      <div style="font-size:34px">▚</div>
+      <div>Camera is off.</div>
+      <button class="btn btn--tag" id="startbtn">Start camera</button>
+    </div>
+    <div class="scan__reticle" id="reticle" hidden><div class="scan__laser"></div></div>
+    <div class="scan__tools" id="tools" hidden>
+      <button class="scan__tool" id="torchbtn" hidden aria-label="Toggle light">☀</button>
+      <button class="scan__tool" id="stopbtn" aria-label="Stop camera">✕</button>
+    </div>
+  </div>
+
+  <div class="read is-hidden" id="read">
+    <div class="read__top">
+      <div class="read__icon" id="readIcon">?</div>
+      <div style="flex:1;min-width:0">
+        <div class="read__label" id="readLabel"></div>
+        <p class="read__name" id="readName"></p>
+        <div class="read__code" id="readCode"></div>
+      </div>
+    </div>
+    <div class="read__body">
+      <p class="read__note" id="readNote"></p>
+      <div class="read__acts" id="readActs"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ TARGETS ============ -->
+<section class="pane" id="pane-targets">
+  <p class="pane__title">Today's targets</p>
+  <div id="taglist"></div>
+  <button class="btn btn--ghost btn--wide" id="addbtn" style="border-style:dashed">+ Add a target</button>
+</section>
+
+<!-- ============ STEPS ============ -->
+<section class="pane" id="pane-steps">
+  <p class="pane__title">Walk-in sequence</p>
+  <div id="steplist"></div>
+  <button class="btn btn--ghost btn--wide" id="resetsteps" style="margin-top:6px">Reset steps</button>
+</section>
+
+<!-- ============ FLAGS ============ -->
+<section class="pane" id="pane-flags">
+  <p class="pane__title">Field rules</p>
+  <div class="flagtabs">
+    <button class="flagtab is-on" data-f="go">Go</button>
+    <button class="flagtab" data-f="hold">Careful</button>
+    <button class="flagtab" data-f="stop">Never</button>
+  </div>
+  <div class="flaglist is-on" data-f="go" id="flags-go"></div>
+  <div class="flaglist" data-f="hold" id="flags-hold"></div>
+  <div class="flaglist" data-f="stop" id="flags-stop"></div>
+</section>
+
+<!-- ============ SHEET ============ -->
+<div class="sheet" id="sheet">
+  <div class="sheet__card">
+    <h2 class="sheet__h" id="sheetH">Add a target</h2>
+    <div class="field"><label class="field__l" for="f-name">Item name</label>
+      <input class="field__i" id="f-name" placeholder="Monteaux 48 ft string light"></div>
+    <div class="field"><label class="field__l" for="f-model">Model number</label>
+      <input class="field__i field__i--mono" id="f-model" placeholder="BALCST_048"></div>
+    <div class="field"><label class="field__l" for="f-sku">Store SKU</label>
+      <input class="field__i field__i--mono" id="f-sku" inputmode="numeric" placeholder="1013891924"></div>
+    <div class="field"><label class="field__l" for="f-upc">UPC (blank = bind on first scan)</label>
+      <input class="field__i field__i--mono" id="f-upc" inputmode="numeric" placeholder="scan to fill"></div>
+    <div class="field"><label class="field__l" for="f-aisle">Where it lives</label>
+      <input class="field__i" id="f-aisle" placeholder="Lighting — string lights"></div>
+    <div class="field"><label class="field__l" for="f-notes">Notes</label>
+      <textarea class="field__i" id="f-notes" rows="2" placeholder="Limited stock, delivery unavailable"></textarea></div>
+    <div style="display:flex;gap:8px;margin-top:14px">
+      <button class="btn btn--ghost" id="sheetDel" style="display:none">Delete</button>
+      <button class="btn btn--ghost" id="sheetX" style="flex:1">Cancel</button>
+      <button class="btn btn--tag" id="sheetSave" style="flex:1">Save</button>
+    </div>
+  </div>
+</div>
+
+<nav class="tabs">
+  <button class="tab is-on" data-pane="scan"><span class="tab__g">▚</span>Scan</button>
+  <button class="tab" data-pane="targets"><span class="tab__g">▤</span>Targets</button>
+  <button class="tab" data-pane="steps"><span class="tab__g">✓</span>Steps</button>
+  <button class="tab" data-pane="flags"><span class="tab__g">⚑</span>Rules</button>
+</nav>
+
+<script src="zxing.min.js"></script>
+<script>
+"use strict";
+
+/* ============================================================
+   STATE
+   ============================================================ */
+var KEY = "pennyrun.v1";
+
+var SEED_TARGETS = [{
+  id: "t-monteaux",
+  name: "Monteaux 48 ft Edison string light",
+  model: "BALCST_048",
+  sku: "1013891924",
+  internet: "334858485",
+  upc: "",
+  aisle: "Lighting — string lights",
+  notes: "Listed $29.97–$39.97. Site shows Limited Stock + delivery unavailable. Not a confirmed penny — scan to find out. Confirm the box: 24 bulbs, 2200K, black cord, 46 ft lighted.",
+  verdict: null
+}];
+
+var STEPS = [
+  ["Set your store in the Home Depot app", "Search the SKU. Note the aisle, bay, and any \u201climited stock\u201d or \u201cunavailable\u201d flag."],
+  ["Walk the aisle", "Check the home shelf and the overhead directly above it. Missed stock hides up there."],
+  ["Read the tag properly", "A real clearance tag has a date AND a \u201cwas\u201d price. No date, no \u201cwas\u201d = not clearance."],
+  ["Stack your clues", "Out-of-place stock, big was\u2192now gap, app says unavailable in store. Two or three on one item is your signal."],
+  ["Take ONE unit to self-checkout", "Leave the rest on the shelf until you know."],
+  ["Scan the UPC on the box", "Thumb over any QR code. Never scan the yellow shelf tag."],
+  ["Read the register", "$0.01 means buy it now and get the receipt in your hand."],
+  ["If it pennied, go back for the rest", "Scan each additional box here in Match mode \u2014 same SKU can carry two different UPCs."]
+];
+
+var FLAGS = {
+  go: [
+    ["Register rang $0.01", "The only real proof. Finish the sale, take the receipt."],
+    ["Two or three clues on one item", "Out of place, dated clearance tag with a \u201cwas\u201d price, and the app showing unavailable in store."],
+    ["Tag has a date and a \u201cwas\u201d price", "Trust in this order: date, then the \u201cwas\u201d price, then aisle/bay, then the price ending."],
+    ["Old tag date plus a deep discount", "Late in the cycle, close to being pulled. Worth a scan."],
+    ["One item pennied", "Check the rest of that category. Whole product lines go together."],
+    ["Anyone can buy them", "Only employees and their families can't."]
+  ],
+  hold: [
+    ["Yellow doesn't mean clearance", "Promos print on yellow too, and sometimes regular prices do when white stock runs out."],
+    ["A price ending in .01 is not a penny", "$61.01 is sixty-one dollars. A penny is one cent, total."],
+    ["Price endings are unreliable now", ".06 \u2192 .03 \u2192 .02 \u2192 .01 is broken and varies by store. A .02 or .03 can still flip within 48 hours."],
+    ["Handwriting on a box is a maybe", "Staff also mark damaged and returned stock."],
+    ["Same SKU, two UPCs", "Old version may penny while the new one rings full. Match every box before you commit."],
+    ["Self-checkout is the softer play", "If it rings full price, say you were price-checking and put it back."],
+    ["One box or the whole stack", "One is less awkward if you're wrong. A penny sale can ping a handheld and the rest gets pulled."],
+    ["Yellow ladders are yours, orange ones aren't", "Never climb an orange ladder. If you truly can't reach it, know that asking may cost you the item."],
+    ["Timing", "Most markdowns run Monday and Tuesday mornings. Go at open, midweek, end of month, after a seasonal reset."]
+  ],
+  stop: [
+    ["Never scan the yellow shelf tag", "That barcode is the label, not the item. It flags an associate every time."],
+    ["Never ask if something is a penny", "Once staff identify it, their job is to pull it. You just lost it."],
+    ["Cover any QR code on the box", "It can trigger an assist popup at the register."],
+    ["Don't clear shelves or hide stock", "Fastest way to get loss prevention watching. Shelf stock only."],
+    ["Don't announce it", "Quiet trip, quiet exit."],
+    ["If they say no, leave it", "It's their call. Arguing gets registers locked and shoppers flagged."],
+    ["Stop-sale is not a penny", "No price and an aborted sale means a hard block. Nobody can override it. Move on."],
+    ["Keep the receipt", "Once it prints, the sale is done. It's proof the register set the price, not you."]
+  ]
+};
+
+var state = { targets: [], steps: [], mode: "lookup", verifyId: null };
+
+function load(){
+  try{
+    var raw = localStorage.getItem(KEY);
+    if(raw){
+      var p = JSON.parse(raw);
+      state.targets = Array.isArray(p.targets) ? p.targets : SEED_TARGETS.slice();
+      state.steps   = Array.isArray(p.steps)   ? p.steps   : [];
+      return;
+    }
+  }catch(e){ /* first run or storage blocked */ }
+  state.targets = JSON.parse(JSON.stringify(SEED_TARGETS));
+  state.steps = [];
+}
+function save(){
+  try{ localStorage.setItem(KEY, JSON.stringify({targets:state.targets, steps:state.steps})); }
+  catch(e){ /* private mode — app still works for this session */ }
+}
+
+/* ============================================================
+   HELPERS
+   ============================================================ */
+function $(id){ return document.getElementById(id); }
+function esc(s){
+  return String(s == null ? "" : s).replace(/[&<>"']/g, function(c){
+    return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c];
+  });
+}
+function digitsOnly(s){ return String(s || "").replace(/\D/g, ""); }
+
+/* UPC-A and EAN-13 describe the same number. Compare on the
+   12-digit core so a leading zero never causes a false mismatch. */
+function normUPC(s){
+  var d = digitsOnly(s);
+  if(d.length === 13 && d.charAt(0) === "0") d = d.slice(1);
+  if(d.length === 8) return d;
+  return d;
+}
+function sameUPC(a,b){
+  a = normUPC(a); b = normUPC(b);
+  return !!a && !!b && a === b;
+}
+
+var audioCtx = null;
+function beep(kind){
+  try{
+    if(!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if(audioCtx.state === "suspended") audioCtx.resume();
+    var o = audioCtx.createOscillator(), g = audioCtx.createGain(), t = audioCtx.currentTime;
+    o.type = "square";
+    o.frequency.setValueAtTime(kind === "bad" ? 220 : 880, t);
+    if(kind === "good") o.frequency.setValueAtTime(1320, t + 0.09);
+    g.gain.setValueAtTime(0.09, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.2);
+    o.connect(g); g.connect(audioCtx.destination);
+    o.start(t); o.stop(t + 0.21);
+  }catch(e){}
+  if(navigator.vibrate) navigator.vibrate(kind === "bad" ? [70,50,70] : 45);
+}
+
+/* Draw a barcode-looking strip from the digits themselves, so
+   two different UPCs never render the same pattern. */
+function barsFor(code){
+  var d = digitsOnly(code);
+  if(!d) return "";
+  var out = "", i, n, h, w;
+  for(i = 0; i < d.length; i++){
+    n = parseInt(d.charAt(i), 10);
+    h = 62 + (n * 4);
+    w = (n % 3) + 1;
+    out += '<i class="tag__bar" style="height:' + h + '%;width:' + w + 'px"></i>';
+    out += '<i class="tag__bar" style="height:' + (h - 14) + '%;width:1px;opacity:.35"></i>';
+  }
+  return out;
+}
+
+/* ============================================================
+   RENDER — targets
+   ============================================================ */
+var VERDICT = {
+  penny:   { stamp:"$0.01",     cls:"penny",   label:"Pennied" },
+  regular: { stamp:"FULL",      cls:"regular", label:"Rang full price" },
+  stop:    { stamp:"STOP-SALE", cls:"stop",    label:"Stop-sale" },
+  missing: { stamp:"NOT FOUND", cls:"missing", label:"Not on the shelf" }
+};
+
+function renderTargets(){
+  var el = $("taglist");
+  if(!state.targets.length){
+    el.innerHTML = '<div class="empty">No targets yet. Add the item you\'re hunting, or scan a box to add it.</div>';
+    renderTally(); return;
+  }
+  var html = "";
+  state.targets.forEach(function(t){
+    var v = t.verdict ? VERDICT[t.verdict] : null;
+    html += '<article class="tag' + (v ? " tag--done" : "") + '">';
+    html +=   '<div class="tag__eyebrow"><span>' + esc(t.aisle || "Location not set") + '</span>';
+    html +=   '<span>' + (v ? esc(v.label) : "Unchecked") + '</span></div>';
+    html +=   '<h3 class="tag__name">' + esc(t.name) + '</h3>';
+    if(t.model) html += '<div class="tag__model">MODEL ' + esc(t.model) + '</div>';
+    html +=   '<div class="tag__grid">';
+    html +=     '<div><div class="tag__k">Store SKU</div><div class="tag__v">' + esc(t.sku || "—") + '</div></div>';
+    html +=     '<div><div class="tag__k">Internet #</div><div class="tag__v">' + esc(t.internet || "—") + '</div></div>';
+    html +=     '<div style="grid-column:1/-1"><div class="tag__k">UPC</div><div class="tag__v">' +
+                  (t.upc ? esc(t.upc) : "not bound — scan to capture") + '</div></div>';
+    html +=   '</div>';
+    if(t.upc){
+      html += '<div class="tag__bars">' + barsFor(t.upc) + '</div>';
+      html += '<div class="tag__digits">' + esc(normUPC(t.upc)) + '</div>';
+    }
+    if(t.notes) html += '<div class="tag__notes">' + esc(t.notes) + '</div>';
+    html +=   '<div class="tag__acts">';
+    if(!v){
+      html +=   '<button class="btn btn--sm btn--go"   data-v="penny"   data-id="' + esc(t.id) + '">Pennied</button>';
+      html +=   '<button class="btn btn--sm btn--ghost" data-v="regular" data-id="' + esc(t.id) + '">Full price</button>';
+      html +=   '<button class="btn btn--sm btn--stop" data-v="stop"    data-id="' + esc(t.id) + '">Stop-sale</button>';
+      html +=   '<button class="btn btn--sm btn--ghost" data-v="missing" data-id="' + esc(t.id) + '">Not there</button>';
+    } else {
+      html +=   '<button class="btn btn--sm btn--ghost" data-v="clear" data-id="' + esc(t.id) + '">Undo result</button>';
+    }
+    html +=     '<button class="btn btn--sm btn--ghost" data-edit="' + esc(t.id) + '">Edit</button>';
+    html +=   '</div>';
+    if(v) html += '<div class="tag__stamp tag__stamp--' + v.cls + '">' + esc(v.stamp) + '</div>';
+    html += '</article>';
+  });
+  el.innerHTML = html;
+  renderTally();
+}
+
+function renderTally(){
+  var total = state.targets.length;
+  var done = state.targets.filter(function(t){ return !!t.verdict; }).length;
+  var hits = state.targets.filter(function(t){ return t.verdict === "penny"; }).length;
+  $("tally").innerHTML = done + "/" + total + " checked<br><b>" + hits + " pennied</b>";
+}
+
+/* ============================================================
+   RENDER — steps and flags
+   ============================================================ */
+function renderSteps(){
+  var html = "";
+  STEPS.forEach(function(s, i){
+    var done = state.steps.indexOf(i) !== -1;
+    html += '<button class="step' + (done ? " is-done" : "") + '" data-step="' + i + '">';
+    html +=   '<span class="step__num">' + (done ? "✓" : (i + 1)) + '</span>';
+    html +=   '<span class="step__text">' + esc(s[0]) + '<span class="step__sub">' + esc(s[1]) + '</span></span>';
+    html += '</button>';
+  });
+  $("steplist").innerHTML = html;
+}
+
+function renderFlags(){
+  ["go","hold","stop"].forEach(function(k){
+    var html = "";
+    FLAGS[k].forEach(function(f){
+      html += '<div class="flagitem"><b>' + esc(f[0]) + '</b>' + esc(f[1]) + '</div>';
+    });
+    $("flags-" + k).innerHTML = html;
+  });
+}
+
+/* ============================================================
+   SCANNER
+   ============================================================ */
+var reader = null, controls = null, videoTrack = null, running = false, lastCode = "", lastAt = 0;
+
+function hints(){
+  var f = ZXing.BarcodeFormat, h = new Map();
+  h.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
+    f.UPC_A, f.UPC_E, f.EAN_13, f.EAN_8, f.CODE_128, f.CODE_39, f.ITF
+  ]);
+  h.set(ZXing.DecodeHintType.TRY_HARDER, true);
+  return h;
+}
+
+function startScan(){
+  if(running) return;
+  if(!window.isSecureContext){
+    showRead("stop","!","Camera blocked","Not a secure page","",
+      "The camera only works over https. Open the hosted address, not the file.", []);
+    return;
+  }
+  if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+    showRead("stop","!","Camera blocked","Unsupported browser","",
+      "This browser won't hand over the camera. Try Safari or Chrome.", []);
+    return;
+  }
+  if(!reader) reader = new ZXing.BrowserMultiFormatReader(hints(), { delayBetweenScanAttempts: 120 });
+
+  var constraints = { video: { facingMode: { ideal: "environment" }, width:{ideal:1280}, height:{ideal:960} }, audio:false };
+
+  reader.decodeFromConstraints(constraints, $("video"), function(result, err){
+    if(result) onCode(result.getText());
+  }).then(function(c){
+    controls = c;
+    running = true;
+    $("idle").style.display = "none";
+    $("reticle").hidden = false;
+    $("tools").hidden = false;
+    var stream = $("video").srcObject;
+    if(stream){
+      videoTrack = stream.getVideoTracks()[0];
+      var caps = videoTrack.getCapabilities ? videoTrack.getCapabilities() : {};
+      if(caps && caps.torch) $("torchbtn").hidden = false;
+    }
+    try{ if(!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }catch(e){}
+  }).catch(function(e){
+    showRead("stop","!","Camera blocked", (e && e.name === "NotAllowedError") ? "Permission denied" : "Couldn't start", "",
+      (e && e.name === "NotAllowedError")
+        ? "Allow camera access for this site in your browser settings, then try again."
+        : "Close other apps using the camera and reload.", []);
+  });
+}
+
+function stopScan(){
+  try{ if(controls) controls.stop(); }catch(e){}
+  try{ if(reader) reader.reset(); }catch(e){}
+  controls = null; videoTrack = null; running = false;
+  $("idle").style.display = "flex";
+  $("reticle").hidden = true;
+  $("tools").hidden = true;
+  $("torchbtn").hidden = true;
+  $("torchbtn").classList.remove("is-on");
+}
+
+function toggleTorch(){
+  if(!videoTrack) return;
+  var on = $("torchbtn").classList.contains("is-on");
+  videoTrack.applyConstraints({ advanced: [{ torch: !on }] })
+    .then(function(){ $("torchbtn").classList.toggle("is-on", !on); })
+    .catch(function(){ $("torchbtn").hidden = true; });
+}
+
+function onCode(code){
+  var now = Date.now();
+  if(code === lastCode && (now - lastAt) < 2200) return;
+  lastCode = code; lastAt = now;
+  if(state.mode === "verify") handleVerify(code);
+  else handleLookup(code);
+}
+
+function findByUPC(code){
+  for(var i = 0; i < state.targets.length; i++){
+    if(sameUPC(state.targets[i].upc, code)) return state.targets[i];
+  }
+  return null;
+}
+
+function handleLookup(code){
+  var hit = findByUPC(code);
+  if(hit){
+    beep("good");
+    var v = hit.verdict ? VERDICT[hit.verdict].label : "Not checked yet";
+    showRead("go","✓","On your list", hit.name, normUPC(code),
+      (hit.aisle ? hit.aisle + " · " : "") + v + (hit.notes ? " — " + hit.notes : ""),
+      [
+        { t:"Pennied",    c:"btn--go",    fn:function(){ setVerdict(hit.id,"penny"); } },
+        { t:"Full price", c:"btn--ghost", fn:function(){ setVerdict(hit.id,"regular"); } },
+        { t:"Match boxes to this", c:"btn--ghost", fn:function(){ setMode("verify", hit.id); } }
+      ]);
+    return;
+  }
+  var unbound = state.targets.filter(function(t){ return !t.upc; });
+  if(unbound.length){
+    beep("good");
+    var acts = unbound.slice(0,3).map(function(t){
+      return { t:"Bind to " + (t.model || t.name.slice(0,18)), c:"btn--tag", fn:function(){ bindUPC(t.id, code); } };
+    });
+    acts.push({ t:"Add as new", c:"btn--ghost", fn:function(){ openSheet(null, code); } });
+    showRead("hold","?","Unknown code","Not matched yet", normUPC(code),
+      "You have targets with no UPC on file. If this is the box in your hand, bind it — then every other box gets checked against it.", acts);
+    return;
+  }
+  beep("bad");
+  showRead("hold","?","Unknown code","Not on your list", normUPC(code),
+    "Nothing on your list uses this UPC.",
+    [{ t:"Add as a target", c:"btn--tag", fn:function(){ openSheet(null, code); } }]);
+}
+
+function handleVerify(code){
+  var ref = state.targets.filter(function(t){ return t.id === state.verifyId; })[0];
+  if(!ref){ setMode("lookup", null); return handleLookup(code); }
+  if(!ref.upc){
+    beep("good");
+    return showRead("hold","?","No reference yet", ref.name, normUPC(code),
+      "Bind this UPC as the reference, then scan the other boxes against it.",
+      [{ t:"Use this as the reference", c:"btn--tag", fn:function(){ bindUPC(ref.id, code); } }]);
+  }
+  if(sameUPC(ref.upc, code)){
+    beep("good");
+    showRead("go","✓","Same UPC — take it", ref.name, normUPC(code),
+      "This box matches the one that rang up. Safe to add to the cart.", []);
+  } else {
+    beep("bad");
+    showRead("stop","✕","Different UPC — leave it", ref.name, normUPC(code),
+      "This is a different version of the same product. It will almost certainly ring full price. Reference is " + normUPC(ref.upc) + ".", []);
+  }
+}
+
+function showRead(tone, icon, label, name, code, note, acts){
+  var r = $("read");
+  r.className = "read read--" + tone;
+  $("readIcon").textContent = icon;
+  $("readLabel").textContent = label;
+  $("readName").textContent = name;
+  $("readCode").textContent = code ? "UPC " + code : "";
+  $("readNote").textContent = note;
+  var box = $("readActs");
+  box.innerHTML = "";
+  (acts || []).forEach(function(a){
+    var b = document.createElement("button");
+    b.className = "btn btn--sm " + a.c;
+    b.textContent = a.t;
+    b.addEventListener("click", a.fn);
+    box.appendChild(b);
+  });
+  r.scrollIntoView({ behavior:"smooth", block:"nearest" });
+}
+
+/* ============================================================
+   MUTATIONS
+   ============================================================ */
+function setVerdict(id, v){
+  state.targets.forEach(function(t){ if(t.id === id) t.verdict = (v === "clear" ? null : v); });
+  save(); renderTargets();
+  var t2 = state.targets.filter(function(x){ return x.id === id; })[0];
+  if(v === "penny" && t2){
+    showRead("go","✓","Logged as pennied", t2.name, normUPC(t2.upc),
+      "Get the receipt in your hand before anything else. Then scan the remaining boxes in Match mode.",
+      [{ t:"Match the other boxes", c:"btn--tag", fn:function(){ setMode("verify", id); } }]);
+  } else {
+    $("read").className = "read is-hidden";
+  }
+}
+
+function bindUPC(id, code){
+  state.targets.forEach(function(t){ if(t.id === id) t.upc = normUPC(code); });
+  save(); renderTargets();
+  var t = state.targets.filter(function(x){ return x.id === id; })[0];
+  showRead("go","✓","UPC saved", t.name, normUPC(code),
+    "Locked in. Switch to Match mode and every other box gets checked against this one.",
+    [{ t:"Match boxes now", c:"btn--tag", fn:function(){ setMode("verify", id); } }]);
+}
+
+function setMode(m, id){
+  state.mode = m;
+  state.verifyId = id || null;
+  lastCode = "";
+  $("mode-lookup").classList.toggle("is-on", m === "lookup");
+  $("mode-verify").classList.toggle("is-on", m === "verify");
+  if(m === "verify"){
+    var t = state.targets.filter(function(x){ return x.id === state.verifyId; })[0];
+    $("modehint").textContent = t
+      ? "Checking every box against " + (t.model || t.name) + ". Green means take it."
+      : "Pick a target on the Targets tab, then scan boxes against it.";
+  } else {
+    $("modehint").textContent = "Scan any box to see if it's on your list.";
+  }
+  go("scan");
+}
+
+/* ============================================================
+   SHEET
+   ============================================================ */
+var editingId = null;
+
+function openSheet(id, prefillUPC){
+  editingId = id || null;
+  var t = id ? state.targets.filter(function(x){ return x.id === id; })[0] : null;
+  $("sheetH").textContent = t ? "Edit target" : "Add a target";
+  $("f-name").value  = t ? t.name : "";
+  $("f-model").value = t ? t.model : "";
+  $("f-sku").value   = t ? t.sku : "";
+  $("f-upc").value   = t ? t.upc : (prefillUPC ? normUPC(prefillUPC) : "");
+  $("f-aisle").value = t ? t.aisle : "";
+  $("f-notes").value = t ? t.notes : "";
+  $("sheetDel").style.display = t ? "inline-flex" : "none";
+  $("sheet").classList.add("is-on");
+}
+function closeSheet(){ $("sheet").classList.remove("is-on"); editingId = null; }
+
+function saveSheet(){
+  var name = $("f-name").value.trim();
+  if(!name){ $("f-name").focus(); return; }
+  var data = {
+    name: name,
+    model: $("f-model").value.trim(),
+    sku: digitsOnly($("f-sku").value),
+    upc: normUPC($("f-upc").value),
+    aisle: $("f-aisle").value.trim(),
+    notes: $("f-notes").value.trim()
+  };
+  if(editingId){
+    state.targets.forEach(function(t){ if(t.id === editingId){ for(var k in data) t[k] = data[k]; } });
+  } else {
+    data.id = "t-" + Date.now().toString(36);
+    data.internet = "";
+    data.verdict = null;
+    state.targets.push(data);
+  }
+  save(); renderTargets(); closeSheet();
+}
+
+function delSheet(){
+  if(!editingId) return;
+  state.targets = state.targets.filter(function(t){ return t.id !== editingId; });
+  save(); renderTargets(); closeSheet();
+}
+
+/* ============================================================
+   NAV
+   ============================================================ */
+function go(pane){
+  ["scan","targets","steps","flags"].forEach(function(p){
+    $("pane-" + p).classList.toggle("is-on", p === pane);
+  });
+  Array.prototype.forEach.call(document.querySelectorAll(".tab"), function(b){
+    b.classList.toggle("is-on", b.getAttribute("data-pane") === pane);
+  });
+  window.scrollTo(0, 0);
+}
+
+/* ============================================================
+   EVENTS
+   ============================================================ */
+Array.prototype.forEach.call(document.querySelectorAll(".tab"), function(b){
+  b.addEventListener("click", function(){ go(b.getAttribute("data-pane")); });
+});
+
+$("startbtn").addEventListener("click", startScan);
+$("stopbtn").addEventListener("click", stopScan);
+$("torchbtn").addEventListener("click", toggleTorch);
+$("mode-lookup").addEventListener("click", function(){ setMode("lookup", null); });
+$("mode-verify").addEventListener("click", function(){
+  var pick = state.verifyId || (state.targets.filter(function(t){ return t.upc; })[0] || {}).id || null;
+  setMode("verify", pick);
+});
+
+$("taglist").addEventListener("click", function(e){
+  var b = e.target.closest("button");
+  if(!b) return;
+  if(b.hasAttribute("data-edit")) return openSheet(b.getAttribute("data-edit"), null);
+  if(b.hasAttribute("data-v")) return setVerdict(b.getAttribute("data-id"), b.getAttribute("data-v"));
+});
+
+$("steplist").addEventListener("click", function(e){
+  var b = e.target.closest(".step");
+  if(!b) return;
+  var i = parseInt(b.getAttribute("data-step"), 10);
+  var at = state.steps.indexOf(i);
+  if(at === -1) state.steps.push(i); else state.steps.splice(at, 1);
+  save(); renderSteps();
+});
+
+$("resetsteps").addEventListener("click", function(){
+  state.steps = []; save(); renderSteps();
+});
+
+Array.prototype.forEach.call(document.querySelectorAll(".flagtab"), function(b){
+  b.addEventListener("click", function(){
+    var f = b.getAttribute("data-f");
+    Array.prototype.forEach.call(document.querySelectorAll(".flagtab"), function(x){
+      x.classList.toggle("is-on", x === b);
+    });
+    Array.prototype.forEach.call(document.querySelectorAll(".flaglist"), function(l){
+      l.classList.toggle("is-on", l.getAttribute("data-f") === f);
+    });
+  });
+});
+
+$("addbtn").addEventListener("click", function(){ openSheet(null, null); });
+$("sheetX").addEventListener("click", closeSheet);
+$("sheetSave").addEventListener("click", saveSheet);
+$("sheetDel").addEventListener("click", delSheet);
+$("sheet").addEventListener("click", function(e){ if(e.target === $("sheet")) closeSheet(); });
+
+document.addEventListener("visibilitychange", function(){
+  if(document.hidden && running) stopScan();
+});
+
+/* ============================================================
+   BOOT
+   ============================================================ */
+load();
+renderTargets();
+renderSteps();
+renderFlags();
+setMode("lookup", null);
+
+if("serviceWorker" in navigator){
+  window.addEventListener("load", function(){
+    navigator.serviceWorker.register("sw.js").catch(function(){});
+  });
+}
+</script>
+</body>
+</html>
