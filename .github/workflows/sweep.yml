@@ -1,0 +1,64 @@
+name: Nightly clearance sweep
+
+on:
+  schedule:
+    # 09:10 UTC — about 5am Eastern, so the list is fresh before the doors open.
+    - cron: "10 9 * * *"
+    # Sundays, an hour earlier: re-harvest the product pool first.
+    - cron: "10 8 * * 0"
+  workflow_dispatch:
+    inputs:
+      harvest:
+        description: "Re-harvest the product pool before scanning"
+        type: boolean
+        default: false
+
+# One sweep at a time; a queued run would only fight over the same file.
+concurrency:
+  group: sweep
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Harvest the product pool
+        if: github.event.schedule == '10 8 * * 0' || inputs.harvest
+        run: python3 tools/sweep.py harvest
+
+      # sweep.py refuses to overwrite the list when a run comes back empty
+      # or collapsed, so a bad night leaves yesterday's data in place.
+      - name: Scan every store
+        run: python3 tools/sweep.py scan
+
+      - name: Commit the new list
+        run: |
+          git config user.name "penny-run-sweep"
+          git config user.email "penny-run-sweep@users.noreply.github.com"
+          git add pennyrun/clearance.json tools/pool.json
+          if git diff --cached --quiet; then
+            echo "nothing changed since the last sweep"
+            exit 0
+          fi
+          hits=$(python3 -c "import json;print(len(json.load(open('pennyrun/clearance.json'))['hits']))")
+          git commit -m "Sweep: ${hits} clearance items across the store list"
+          # A push races the deploy workflow's own commits at most rarely,
+          # but rebase-and-retry costs nothing and avoids a failed night.
+          for i in 1 2 3; do
+            git push && exit 0
+            sleep $((i * 5))
+            git pull --rebase origin "${GITHUB_REF_NAME}" || true
+          done
+          exit 1

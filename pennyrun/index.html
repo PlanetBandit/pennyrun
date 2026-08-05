@@ -571,7 +571,7 @@ input,select,textarea{font-family:inherit;font-size:16px}
   <div class="flaglist is-on" data-f="go" id="flags-go"></div>
   <div class="flaglist" data-f="hold" id="flags-hold"></div>
   <div class="flaglist" data-f="stop" id="flags-stop"></div>
-  <p class="scan__hint" style="text-align:center;margin-top:16px">Penny Run · build v52</p>
+  <p class="scan__hint" style="text-align:center;margin-top:16px">Penny Run · build v53</p>
 </section>
 
 <!-- ============ ASSESSMENT SHEET ============ -->
@@ -1157,7 +1157,8 @@ function buildCatIndex(d){
       name: r[0], id: r[1], cat: r[2], price: r[3], was: r[4], pct: r[5],
       store: r[6], qty: (r[7] == null ? null : r[7]),
       url: "https://www.homedepot.com" + (r[9] || "/p/" + r[1]),
-      upc: u, sku: r[11] || "", model: r[12] || ""
+      upc: u, sku: r[11] || "", model: r[12] || "",
+      oos: !!r[8], sup: !!r[13]
     });
   });
   return CATUPC;
@@ -1193,6 +1194,8 @@ function sweepSummary(rows){
     s += " Cheaper at " + storeName(cheaper.store) + " $" + cheaper.price.toFixed(2) +
          " (-" + cheaper.pct + "%).";
   }
+  if(b.oos) s += " Store only — it can't be ordered.";
+  if(b.sup) s += " Home Depot lists a replacement SKU, so it's being phased out.";
   if(rows.length > 1) s += " Found at " + rows.length + " of your stores.";
   return s;
 }
@@ -1636,10 +1639,14 @@ function renderSweep(){
       : list.length + " found, but none carried a clearance signal — these are search results to check, not confirmed clearance. Tap one to open it at your store.";
   }
   /* badged candidates first — they're the ones worth the walk.
-     Sort the backing array so row indices stay valid on tap. */
-  sweepList.sort(function(a, b){
-    return ((b.clear ? 2 : 0) + (b.oos ? 1 : 0)) - ((a.clear ? 2 : 0) + (a.oos ? 1 : 0));
-  });
+     Sort the backing array so row indices stay valid on tap. The
+     catalog arrives already ordered by depth with empty shelves last,
+     so leave that alone. */
+  if(sweepSource !== "catalog"){
+    sweepList.sort(function(a, b){
+      return ((b.clear ? 2 : 0) + (b.oos ? 1 : 0)) - ((a.clear ? 2 : 0) + (a.oos ? 1 : 0));
+    });
+  }
   list = sweepList;
   var html = "";
   list.forEach(function(c, i){
@@ -1657,7 +1664,8 @@ function renderSweep(){
       }
       html +=   '<span class="storeitem__addr"><span class="storeitem__price">$' + c.price.toFixed(2) +
                 '</span> <span class="storeitem__was">was $' + (c.was || 0).toFixed(2) +
-                (c.oos ? " · store only" : "") + '</span>' + qh;
+                (c.oos ? " · store only" : "") +
+                (c.sup ? " · being replaced" : "") + '</span>' + qh;
       /* the clearance price is that store's only — say which, loudly */
       if(c.store) html += '<span class="atstore">@ ' + esc(storeName(c.store)) + '</span>';
       var ids = [];
@@ -1718,7 +1726,7 @@ function showCatalog(){
                clear: true, oos: !!r[8], cat: r[2],
                price: r[3], was: r[4], pct: r[5], store: r[6] || null,
                qty: (r[7] == null ? null : r[7]), upc: r[10] || "",
-               sku: r[11] || "", model: r[12] || "" };
+               sku: r[11] || "", model: r[12] || "", sup: !!r[13] };
     });
     /* deepest markdown first, but a shelf the store says is empty is a
        wasted walk — those sink to the bottom rather than disappear */

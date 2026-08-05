@@ -2,7 +2,7 @@
    Everything the app needs is local, so one pass at install
    makes the whole thing work with zero bars in the store. */
 
-var CACHE = "pennyrun-v52";
+var CACHE = "pennyrun-v53";
 var ASSETS = [
   "./",
   "./index.html",
@@ -55,6 +55,22 @@ self.addEventListener("fetch", function(e){
       }).catch(function(){
         return caches.match("./index.html");
       })
+    );
+    return;
+  }
+
+  /* The sweep is re-run nightly, so it must never be answered from a
+     stale cache while online. Small file, network-first, and the cached
+     copy still carries the whole list into a dead-signal aisle. */
+  if(e.request.url.indexOf("clearance.json") !== -1){
+    e.respondWith(
+      fetch(e.request).then(function(res){
+        if(res && res.status === 200){
+          var copy = res.clone();
+          caches.open(CACHE).then(function(c){ c.put(e.request, copy); });
+        }
+        return res;
+      }).catch(function(){ return caches.match(e.request); })
     );
     return;
   }
