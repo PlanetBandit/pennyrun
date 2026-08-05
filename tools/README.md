@@ -86,15 +86,41 @@ stores in 6–9 seconds each, against 34–69 seconds for a working scan.
 The scan's safety rail refused to overwrite the list, and the `probe`
 stage now runs first so the reason is on the line that matters.
 
-**The fix is a self-hosted runner on a home network.** Register one
-against the repo, then set the repository variable `SWEEP_RUNNER` to
-`self-hosted` — the workflow reads it, so no code changes. An old
-laptop, a Pi, or anything that stays on overnight is enough; the job is
-~7 minutes of mostly waiting on the network.
+### Check any machine before trusting it
 
-Until then the nightly run fails on the probe step every night, which is
-the honest signal that the list is not refreshing. Disable the workflow
-in the Actions tab if the noise is worse than the reminder.
+Datacentre ranges vary — a VPS may or may not be refused, and guessing
+wastes an evening. Ask from the box itself:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/PlanetBandit/pennyrun/main/tools/checkhost.py | python3 -
+```
+
+It prints the status of all three hosts and exits non-zero if Home Depot
+won't quote a price. No checkout, no dependencies.
+
+### Running it there
+
+Whatever passes the check — a VPS, an old laptop, a Pi — register a
+self-hosted GitHub runner on it and set the repository variable
+`SWEEP_RUNNER` to `self-hosted`. The workflow reads that variable, so
+nothing in the code changes and the schedule, safety rails and commit
+logic all stay as they are.
+
+```bash
+sudo apt install -y python3 git
+mkdir ~/actions-runner && cd ~/actions-runner
+# grab the download + config commands from
+#   github.com/PlanetBandit/pennyrun → Settings → Actions → Runners → New runner
+sudo ./svc.sh install && sudo ./svc.sh start   # survives reboots
+```
+
+The job is about 7 minutes, mostly waiting on the network, so the
+smallest box is plenty.
+
+Until a runner exists the nightly run fails on the probe step every
+night, which is the honest signal that the list is not refreshing.
+Disable the workflow in the Actions tab if the noise is worse than the
+reminder.
 
 ## Which stores get swept
 
