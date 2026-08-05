@@ -567,7 +567,7 @@ input,select,textarea{font-family:inherit;font-size:16px}
   <div class="flaglist is-on" data-f="go" id="flags-go"></div>
   <div class="flaglist" data-f="hold" id="flags-hold"></div>
   <div class="flaglist" data-f="stop" id="flags-stop"></div>
-  <p class="scan__hint" style="text-align:center;margin-top:16px">Penny Run · build v29</p>
+  <p class="scan__hint" style="text-align:center;margin-top:16px">Penny Run · build v30</p>
 </section>
 
 <!-- ============ ASSESSMENT SHEET ============ -->
@@ -1443,21 +1443,28 @@ function readShotFile(file){
    inline clearance and online-unavailable signals. One share
    becomes a whole aisle's worth of leads.
    ============================================================ */
+/* Matches arrive in document order, so a signal belongs to the
+   product link most recently seen before it. Anything appearing
+   before the first link belongs to no product and is discarded —
+   that keeps page-level noise from falsely badging an item. */
 function parseSweep(text){
   var t = String(text || "");
-  var seen = {}, out = [];
-  var re = /\/p\/([A-Za-z0-9][A-Za-z0-9%-]{6,90})\/(\d{6,})/g, m;
-  while((m = re.exec(t))){
-    var id = m[2];
-    if(seen[id]) continue;
-    seen[id] = 1;
-    var name = decodeURIComponent(m[1]).replace(/-/g, " ").replace(/\s+/g, " ").trim();
-    /* nearest signals in the surrounding slice of the blob */
-    var win = t.slice(Math.max(0, m.index - 1400), m.index + 1400);
-    var clear = /"clearance":\{/.test(win) || /clearance/i.test(win);
-    var oos = /"type":"delivery"[^}]*"fulfillable":false|OUT_OF_STOCK|deliveryAvailable"?:\s*false/i.test(win);
-    out.push({ name: name, url: "https://www.homedepot.com/p/" + m[1] + "/" + id, id: id, clear: clear, oos: oos });
-    if(out.length >= 60) break;
+  var tok = /\/p\/([A-Za-z0-9][A-Za-z0-9%-]{6,90})\/(\d{6,})|("clearance"\s*:\s*\{)|(OUT_OF_STOCK|BACKORDERED|LIMITED_STOCK)|("fulfillable"\s*:\s*false)|([Cc]learance\s+[Ii]tem)/g;
+  var byId = {}, out = [], cur = null, m;
+  while((m = tok.exec(t))){
+    if(m[1]){
+      var id = m[2];
+      if(byId[id]){ cur = byId[id]; continue; }
+      cur = { name: decodeURIComponent(m[1]).replace(/-/g, " ").replace(/\s+/g, " ").trim(),
+              url: "https://www.homedepot.com/p/" + m[1] + "/" + id,
+              id: id, clear: false, oos: false };
+      byId[id] = cur;
+      out.push(cur);
+      if(out.length >= 60) break;
+    } else if(cur){
+      if(m[3] || m[6]) cur.clear = true;
+      if(m[4] || m[5]) cur.oos = true;
+    }
   }
   return out;
 }
@@ -1473,9 +1480,15 @@ function renderSweep(){
     return;
   }
   var flagged = list.filter(function(c){ return c.clear || c.oos; }).length;
-  $("sweepsum").textContent = list.length + " products found" +
-    (flagged ? " · " + flagged + " show a clearance or online-unavailable signal" : "") +
-    ". Tap to open at your store, then share the keepers back.";
+  $("sweepsum").textContent = flagged
+    ? list.length + " found · " + flagged + " carry a clearance or in-store-only signal (badged, listed first). Tap one to open it, then share it back for the full verdict."
+    : list.length + " found, but none carried a clearance signal — these are search results to check, not confirmed clearance. Tap one to open it at your store.";
+  /* badged candidates first — they're the ones worth the walk.
+     Sort the backing array so row indices stay valid on tap. */
+  sweepList.sort(function(a, b){
+    return ((b.clear ? 2 : 0) + (b.oos ? 1 : 0)) - ((a.clear ? 2 : 0) + (a.oos ? 1 : 0));
+  });
+  list = sweepList;
   var html = "";
   list.forEach(function(c, i){
     var badge = c.clear ? "🏷️" : c.oos ? "🚫" : "·";
