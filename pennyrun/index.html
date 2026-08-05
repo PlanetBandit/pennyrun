@@ -562,7 +562,7 @@ input,select,textarea{font-family:inherit;font-size:16px}
   <div class="flaglist is-on" data-f="go" id="flags-go"></div>
   <div class="flaglist" data-f="hold" id="flags-hold"></div>
   <div class="flaglist" data-f="stop" id="flags-stop"></div>
-  <p class="scan__hint" style="text-align:center;margin-top:16px">Penny Run · build v41</p>
+  <p class="scan__hint" style="text-align:center;margin-top:16px">Penny Run · build v42</p>
 </section>
 
 <!-- ============ ASSESSMENT SHEET ============ -->
@@ -1559,9 +1559,13 @@ function renderSweep(){
     if(c.cat) html += '<span class="cattile">' + esc(shortCat(c.cat)) + '</span>';
     html +=   '<div style="flex:1;min-width:0"><b>' + esc(c.name.slice(0, 60)) + '</b>';
     if(c.price != null){
+      var extra = "";
+      if(c.qty != null) extra += " · " + c.qty + " in stock";
+      if(c.oos) extra += " · store only";
+      if(c.store) extra += " · " + storeName(c.store);
       html +=   '<span class="storeitem__addr"><span class="storeitem__price">$' + c.price.toFixed(2) +
                 '</span> <span class="storeitem__was">was $' + (c.was || 0).toFixed(2) +
-                (c.store ? " · " + esc(storeName(c.store)) : "") + '</span></span></div>';
+                esc(extra) + '</span></span></div>';
       html +=   '<span class="storeitem__off">-' + c.pct + '%</span>';
     } else {
       var badge = c.clear ? "🏷️" : c.oos ? "🚫" : "·";
@@ -1606,8 +1610,9 @@ function showCatalog(){
     var src = (state.storeHits && state.storeHits.hits) ? state.storeHits.hits : (d.hits || []);
     sweepList = src.map(function(r){
       return { name: r[0], id: r[1], url: "https://www.homedepot.com/p/" + r[1],
-               clear: true, oos: false, cat: r[2],
-               price: r[3], was: r[4], pct: r[5], store: r[6] || null };
+               clear: true, oos: !!r[8], cat: r[2],
+               price: r[3], was: r[4], pct: r[5], store: r[6] || null,
+               qty: (r[7] == null ? null : r[7]) };
     });
     sweepSource = "catalog";
     renderSweep();
@@ -1648,10 +1653,11 @@ function scanStores(){
         var cl = pr && pr.clearance;
         if(cl && cl.value != null){
           var label = ((p.identifiers || {}).productLabel) || item[0];
+          var st = stockAt(p);
           hits.push([String(label).slice(0, 78), item[1], item[2],
                      Math.round(cl.value * 100) / 100,
                      Math.round((pr.value || 0) * 100) / 100,
-                     Math.round(cl.percentageOff || 0), store]);
+                     Math.round(cl.percentageOff || 0), store, st.qty, st.storeOnly ? 1 : 0]);
           hits.sort(function(a, b){ return b[5] - a[5]; });
         }
       }).catch(function(){}).then(function(){
@@ -1673,8 +1679,9 @@ function scanStores(){
       $("scanstores").textContent = "🔎 Scan stores";
       sweepList = hits.map(function(r){
         return { name: r[0], id: r[1], url: "https://www.homedepot.com/p/" + r[1],
-                 clear: true, oos: false, cat: r[2],
-                 price: r[3], was: r[4], pct: r[5], store: r[6] };
+                 clear: true, oos: !!r[8], cat: r[2],
+                 price: r[3], was: r[4], pct: r[5], store: r[6],
+                 qty: (r[7] == null ? null : r[7]) };
       });
       sweepSource = "catalog";
       renderSweep();
@@ -2196,8 +2203,29 @@ function hdStores(zip){
 function hdClearance(itemId, storeId){
   return hdQuery('query q($i: String!) { product(itemId: $i) { itemId ' +
     'identifiers { productLabel } pricing(storeId: "' + storeId + '", ' +
-    'isBrandPricingPolicyCompliant: false) { value clearance { value percentageOff } } } }',
+    'isBrandPricingPolicyCompliant: false) { value clearance { value percentageOff } } ' +
+    'fulfillment(storeId: "' + storeId + '") { fulfillmentOptions { type fulfillable ' +
+    'services { type locations { storeName inventory { quantity isInStock } } } } } } }',
     { i: itemId }).then(function(d){ return (d && d.product) || null; });
+}
+
+/* how many that store actually has on the shelf, plus whether
+   pickup is blocked — the in-store-only signature */
+function stockAt(product){
+  var out = { qty: null, storeOnly: false };
+  var f = product && product.fulfillment;
+  var opts = (f && f.fulfillmentOptions) || [];
+  opts.forEach(function(o){
+    if(o.type === "delivery" && o.fulfillable === false) out.storeOnly = true;
+    (o.services || []).forEach(function(s){
+      (s.locations || []).forEach(function(l){
+        if(o.type === "pickup" && l.inventory && l.inventory.quantity != null){
+          out.qty = l.inventory.quantity;
+        }
+      });
+    });
+  });
+  return out;
 }
 
 /* ============================================================
