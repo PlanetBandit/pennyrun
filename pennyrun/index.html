@@ -472,7 +472,8 @@ input,select,textarea{font-family:inherit;font-size:16px}
         <button class="btn btn--sm btn--ghost" data-copy="rx-url">Copy</button></div></li>
       <li>Add action <b>Open URLs</b> (on that Text). Done — in the HD app tap Share → <b>Send to Penny Run</b>.</li>
     </ol>
-    <p class="guide__p">Why not a full-page capture? Home Depot's page draws itself with JavaScript after loading, so PDF/screenshot renders only catch the empty shell — the page's raw code is where the data actually lives. The store-specific clearance dollar amount still may not appear without your store session; the 📸 screenshot reader remains the sure way to capture that panel.</p>
+    <p class="guide__p">Why not a full-page capture? Home Depot's page draws itself with JavaScript after loading, so PDF/screenshot renders only catch the empty shell — the page's raw code is where the data actually lives.</p>
+    <p class="guide__p"><b>Power move:</b> set your store in the Stores tab, then add the Cookie header it gives you to the “Get Contents of URL” action — the shortcut then fetches every page as YOUR store, in-store clearance price included.</p>
   </details>
 </section>
 
@@ -483,6 +484,28 @@ input,select,textarea{font-family:inherit;font-size:16px}
   <button class="btn btn--tag btn--wide" id="locbtn">⌖ Find stores near me</button>
   <div id="storelist" style="margin-top:10px"></div>
   <p class="scan__hint">Straight-line distances. Locations © OpenStreetMap contributors.</p>
+
+  <p class="pane__title" style="margin-top:20px">My store</p>
+  <p class="scan__hint" style="margin:0 0 8px" id="mystoreSum"></p>
+  <div style="display:flex;gap:6px">
+    <div class="field" style="flex:1"><label class="field__l" for="f-storenum">Store #</label>
+      <input class="field__i field__i--mono" id="f-storenum" inputmode="numeric" placeholder="2582"></div>
+    <div class="field" style="flex:2"><label class="field__l" for="f-storename">Name (optional)</label>
+      <input class="field__i" id="f-storename" placeholder="Parkville"></div>
+  </div>
+  <button class="btn btn--tag btn--wide" id="storeSave">Save my store</button>
+  <div id="mystoreTools" hidden style="margin-top:12px">
+    <p class="field__l">Shortcut upgrade — your store's clearance prices</p>
+    <div class="copyrow"><code id="cookieVal" class="field__i--mono" style="display:block;font-family:var(--mono);font-size:10.5px;background:var(--paper);border:1px dashed var(--line);border-radius:6px;padding:6px 8px;word-break:break-all;flex:1;min-width:0"></code>
+      <button class="btn btn--sm btn--ghost" data-copy="cookieVal">Copy</button></div>
+    <p class="scan__hint" style="margin:4px 0 10px">One-time: in your shortcut, tap the ⟩ on <b>Get Contents of URL</b> → Headers → add key <b>Cookie</b> with this value. Every shared link then fetches as YOUR store — including its in-store clearance price.</p>
+    <p class="field__l">Hunt at my store</p>
+    <div style="display:flex;gap:6px">
+      <button class="btn btn--ghost" id="browseSavings" style="flex:1">Savings Center ↗</button>
+      <button class="btn btn--ghost" id="browseClear" style="flex:1">Clearance search ↗</button>
+    </div>
+    <p class="scan__hint" style="margin-top:6px">Open these in the HD app with your store set, browse for the clearance badge, and share anything promising straight back to Penny Run.</p>
+  </div>
 </section>
 
 <!-- ============ CHECKED ============ -->
@@ -528,7 +551,7 @@ input,select,textarea{font-family:inherit;font-size:16px}
   <div class="flaglist is-on" data-f="go" id="flags-go"></div>
   <div class="flaglist" data-f="hold" id="flags-hold"></div>
   <div class="flaglist" data-f="stop" id="flags-stop"></div>
-  <p class="scan__hint" style="text-align:center;margin-top:16px">Penny Run · build v25</p>
+  <p class="scan__hint" style="text-align:center;margin-top:16px">Penny Run · build v26</p>
 </section>
 
 <!-- ============ ASSESSMENT SHEET ============ -->
@@ -682,7 +705,7 @@ var CLUES = [
 
 var ENDING_SCORE = { "":0, "06":1, "03":1, "02":2, "01":0, "penny":4 };
 
-var state = { items: [], steps: [], mode: "assess", verifyId: null };
+var state = { items: [], steps: [], myStore: null, mode: "assess", verifyId: null };
 
 function load(){
   try{
@@ -691,15 +714,36 @@ function load(){
       var p = JSON.parse(raw);
       state.items = Array.isArray(p.items) ? p.items : [];
       state.steps = Array.isArray(p.steps) ? p.steps : [];
+      state.myStore = (p.myStore && p.myStore.num) ? p.myStore : null;
       return;
     }
   }catch(e){ /* first run or storage blocked */ }
   state.items = [];
   state.steps = [];
+  state.myStore = null;
 }
 function save(){
-  try{ localStorage.setItem(KEY, JSON.stringify({items:state.items, steps:state.steps})); }
+  try{ localStorage.setItem(KEY, JSON.stringify({items:state.items, steps:state.steps, myStore:state.myStore})); }
   catch(e){ /* private mode — app still works for this session */ }
+}
+
+/* The localizer cookie steers homedepot.com to a specific store —
+   which is where the in-store clearance data lives. Verified format. */
+function storeCookie(){
+  if(!state.myStore) return "";
+  var nm = encodeURIComponent(state.myStore.name || "Store");
+  return "THD_PERSIST=C4%3D" + state.myStore.num + "%2B" + nm + "%20%2B";
+}
+
+function renderMyStore(){
+  var s = state.myStore;
+  $("f-storenum").value = s ? s.num : "";
+  $("f-storename").value = s ? (s.name || "") : "";
+  $("mystoreSum").textContent = s
+    ? "Set: #" + s.num + (s.name ? " · " + s.name : "") + " — tools unlocked below."
+    : "Your store # is in the HD app (Me → My Store) and printed on every receipt.";
+  $("mystoreTools").hidden = !s;
+  if(s) $("cookieVal").textContent = storeCookie();
 }
 
 /* ============================================================
@@ -1908,6 +1952,20 @@ $("f-tagd").addEventListener("input", updateLive);
 
 $("locbtn").addEventListener("click", locate);
 
+$("storeSave").addEventListener("click", function(){
+  var num = digitsOnly($("f-storenum").value);
+  if(!num || num.length < 3 || num.length > 5){ $("f-storenum").focus(); return; }
+  state.myStore = { num: num, name: $("f-storename").value.trim() };
+  save(); renderMyStore();
+});
+
+$("browseSavings").addEventListener("click", function(){
+  window.open("https://www.homedepot.com/c/Savings_Center", "_blank", "noopener");
+});
+$("browseClear").addEventListener("click", function(){
+  window.open("https://www.homedepot.com/s/clearance", "_blank", "noopener");
+});
+
 Array.prototype.forEach.call(document.querySelectorAll("[data-copy]"), function(b){
   b.addEventListener("click", function(){
     var el = $(b.getAttribute("data-copy"));
@@ -1987,6 +2045,7 @@ load();
 renderItems();
 renderSteps();
 renderFlags();
+renderMyStore();
 setMode("assess", null);
 
 (function(){
