@@ -516,6 +516,29 @@ def probe():
         ("search page", urllib.request.Request(
             "https://www.homedepot.com/s/mulch%20clearance", headers={"User-Agent": UA})),
     ]
+    # A datacentre IP and a missing header look identical from the outside:
+    # both come back 206 with "Generic Errors API". Try the variants a real
+    # app sends so the answer is measured rather than assumed.
+    for label, extra in [
+        ("+ origin/referer", {"Origin": "https://www.homedepot.com",
+                              "Referer": "https://www.homedepot.com/"}),
+        ("+ desktop UA", {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                          "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36"}),
+        ("+ apollo hdrs", {"apollographql-client-name": "general-merchandise",
+                           "apollographql-client-version": "0.0.0",
+                           "x-hd-dc": "origin", "Accept": "*/*"}),
+    ]:
+        h = {"Content-Type": "application/json",
+             "x-experience-name": "general-merchandise", "User-Agent": UA}
+        h.update(extra)
+        try:
+            with urllib.request.urlopen(
+                    urllib.request.Request(API, data=body, headers=h), timeout=30) as r:
+                say("  api %-16s HTTP %s  %s" % (label, r.status,
+                    r.read(150).decode("utf-8", "replace").replace("\n", " ")))
+        except Exception as e:
+            say("  api %-16s FAILED  %s" % (label, e))
+
     bad = 0
     for name, req in checks:
         try:
