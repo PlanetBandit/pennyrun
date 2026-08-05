@@ -567,7 +567,7 @@ input,select,textarea{font-family:inherit;font-size:16px}
   <div class="flaglist is-on" data-f="go" id="flags-go"></div>
   <div class="flaglist" data-f="hold" id="flags-hold"></div>
   <div class="flaglist" data-f="stop" id="flags-stop"></div>
-  <p class="scan__hint" style="text-align:center;margin-top:16px">Penny Run · build v30</p>
+  <p class="scan__hint" style="text-align:center;margin-top:16px">Penny Run · build v31</p>
 </section>
 
 <!-- ============ ASSESSMENT SHEET ============ -->
@@ -1566,6 +1566,22 @@ function handleHDShare(text){
   if(sweep.length >= 4){ showSweep(sweep); return; }
 
   var p = parseHDShare(text);
+
+  /* A category or search page that yielded no products means the
+     shortcut fetched it but didn't harvest links — almost always a
+     Match pattern without the /p/ piece. Say so instead of opening
+     a meaningless one-item sheet. */
+  if(p.url && /\/(s|b|c)\//i.test(p.url) && !/\/p\//i.test(p.url)){
+    showRead("hold", "!", "Category page — no products harvested",
+      sweep.length ? sweep.length + " link(s) found, need 4+" : "No product links in what came back", "",
+      "Your shortcut reached the category page but sent back no products. Most likely its Match Text pattern predates Sweep and is missing the /p/ piece that harvests product links — copy the current pattern from the setup guide and paste it over the one in your shortcut. If it still comes back empty, Home Depot served the shortcut a page with nothing in it; use 🏬 Browse in HD instead.",
+      [{ t:"Open the setup guide", c:"btn--tag", fn:function(){
+          go("scan");
+          var g = document.querySelector(".guide");
+          if(g){ g.open = true; g.scrollIntoView({ behavior:"smooth", block:"center" }); }
+        }}]);
+    return;
+  }
   var read = applyAppShot(parseAppShot(text)); /* shortcut-fetched data rides in the same text */
   var bits = [];
   if(p.name) bits.push(p.name);
