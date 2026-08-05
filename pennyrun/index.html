@@ -560,7 +560,7 @@ input,select,textarea{font-family:inherit;font-size:16px}
   <div class="flaglist is-on" data-f="go" id="flags-go"></div>
   <div class="flaglist" data-f="hold" id="flags-hold"></div>
   <div class="flaglist" data-f="stop" id="flags-stop"></div>
-  <p class="scan__hint" style="text-align:center;margin-top:16px">Penny Run · build v46</p>
+  <p class="scan__hint" style="text-align:center;margin-top:16px">Penny Run · build v47</p>
 </section>
 
 <!-- ============ ASSESSMENT SHEET ============ -->
@@ -1594,10 +1594,13 @@ function showCatalog(){
     var picked = state.pickedStores || [];
     if(picked.length) src = src.filter(function(r){ return picked.indexOf(r[6]) !== -1; });
     sweepList = src.map(function(r){
-      return { name: r[0], id: r[1], url: "https://www.homedepot.com/p/" + r[1],
+      /* r[9] is Home Depot's canonical path — the short /p/<id>
+         form opens but errors inside their app */
+      return { name: r[0], id: r[1],
+               url: "https://www.homedepot.com" + (r[9] || "/p/" + r[1]),
                clear: true, oos: !!r[8], cat: r[2],
                price: r[3], was: r[4], pct: r[5], store: r[6] || null,
-               qty: (r[7] == null ? null : r[7]) };
+               qty: (r[7] == null ? null : r[7]), upc: r[10] || "" };
     });
     sweepSource = "catalog";
     renderSweep();
