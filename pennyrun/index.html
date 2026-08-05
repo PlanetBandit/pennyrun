@@ -512,13 +512,11 @@ input,select,textarea{font-family:inherit;font-size:16px}
 
     <p class="scan__hint" id="sweepsum" style="margin:8px 0"></p>
     <div id="sweeplist"></div>
-    <div id="sweeppick" hidden></div>
     <div style="display:flex;gap:6px;margin-top:8px">
       <button class="btn btn--tag btn--sm" id="catbtn" style="flex:1">📖 Show clearance</button>
-      <button class="btn btn--go btn--sm" id="scanstores" style="flex:1" hidden>🔎 Scan stores</button>
+      <button class="btn btn--go btn--sm" id="scanstores" style="flex:1" hidden>🔎 Filter to my stores</button>
       <button class="btn btn--ghost btn--sm" id="sweepclear" hidden>Clear</button>
     </div>
-    <button class="btn btn--ghost btn--wide btn--sm" id="sweepstart" style="margin-top:6px">🧹 Fetch a category via shortcut</button>
   </div>
 
   <p class="pane__title">Checked items</p>
@@ -562,7 +560,7 @@ input,select,textarea{font-family:inherit;font-size:16px}
   <div class="flaglist is-on" data-f="go" id="flags-go"></div>
   <div class="flaglist" data-f="hold" id="flags-hold"></div>
   <div class="flaglist" data-f="stop" id="flags-stop"></div>
-  <p class="scan__hint" style="text-align:center;margin-top:16px">Penny Run · build v42</p>
+  <p class="scan__hint" style="text-align:center;margin-top:16px">Penny Run · build v43</p>
 </section>
 
 <!-- ============ ASSESSMENT SHEET ============ -->
@@ -918,22 +916,6 @@ function ripeness(item){
   return Math.min(99, s);
 }
 
-/* Month-matched hunting grounds: [button label, HD search query].
-   Paired with SEASON so the launcher points at whatever resets now. */
-var SEASON_HUNT = [
-  [["Holiday decor","christmas decor clearance"],["Toys","toys clearance"],["Storage totes","storage totes clearance"]],
-  [["Holiday last call","holiday decor clearance"],["Heaters","space heater clearance"],["Valentine's","valentines clearance"]],
-  [["Snow & winter","snow removal clearance"],["Heaters","space heater clearance"],["Easter","easter clearance"]],
-  [["Easter","easter clearance"],["Winter last call","snow removal clearance"],["Garden reset","garden center clearance"]],
-  [["Cleaning","cleaning supplies clearance"],["Garden","garden plants clearance"],["Gifts","gift sets clearance"]],
-  [["Patio","patio furniture clearance"],["Garden decor","garden decor clearance"],["Tool sets","tool set clearance"]],
-  [["Patriotic","patriotic decor clearance"],["Patio","patio furniture clearance"],["Lawn care","lawn fertilizer clearance"]],
-  [["Patio","patio furniture clearance"],["Fans & AC","fans clearance"],["Pools","pools clearance"]],
-  [["Patio last call","patio furniture clearance"],["Grills","grills clearance"],["Storage","storage clearance"]],
-  [["Summer final","patio clearance"],["Garden","garden clearance"],["Fall decor","fall decor clearance"]],
-  [["Halloween","halloween clearance"],["Fall decor","fall decor clearance"],["Christmas","christmas decor clearance"]],
-  [["Candy & gifts","gift sets clearance"],["Tool kits","tool set clearance"],["Christmas","christmas decor clearance"]]
-];
 
 var SEASON = [
   ["Christmas & holiday decor (deepest clearance)", "Toys and gift sets", "Storage totes"],
@@ -1532,15 +1514,13 @@ function renderSweep(){
     return;
   }
   if(sweepSource === "catalog"){
-    var sh = state.storeHits;
-    $("sweepsum").textContent = sh
-      ? list.length + " on clearance at " + sh.stores + " — " + sh.scanned +
-        " checks, " + timeAgo(sh.at) + ". Deepest markdown first."
-      : list.length + " products carrying the in-store clearance tag" +
-        (CATALOG && CATALOG.store ? " at store #" + CATALOG.store : "") +
-        (CATALOG && CATALOG.pool_n ? ", from " + CATALOG.pool_n + " swept" : "") +
-        (CATALOG && CATALOG.harvested ? " on " + CATALOG.harvested : "") +
-        ". Pick your stores above and Scan to check them live.";
+    var picked = (state.pickedStores || []).length;
+    $("sweepsum").textContent = list.length + " on in-store clearance" +
+      (picked ? " at your " + picked + " selected store" + (picked === 1 ? "" : "s") : " across " +
+        ((CATALOG && CATALOG.stores_n) || "all") + " nearby stores") +
+      (CATALOG && CATALOG.pool_n ? " · " + CATALOG.pool_n + " products swept" : "") +
+      (CATALOG && CATALOG.harvested ? " " + CATALOG.harvested : "") +
+      ". Deepest markdown first.";
   } else {
     var flagged = list.filter(function(c){ return c.clear || c.oos; }).length;
     $("sweepsum").textContent = flagged
@@ -1580,8 +1560,7 @@ function renderSweep(){
 function showSweep(list){
   sweepList = list;
   sweepSource = "sweep";
-  $("sweeppick").hidden = true;
-  renderSweep();
+    renderSweep();
   go("checked");
 }
 
@@ -1607,7 +1586,9 @@ function loadCatalog(){
    tile so the whole sweep reads as a single walking list. */
 function showCatalog(){
   loadCatalog().then(function(d){
-    var src = (state.storeHits && state.storeHits.hits) ? state.storeHits.hits : (d.hits || []);
+    var src = d.hits || [];
+    var picked = state.pickedStores || [];
+    if(picked.length) src = src.filter(function(r){ return picked.indexOf(r[6]) !== -1; });
     sweepList = src.map(function(r){
       return { name: r[0], id: r[1], url: "https://www.homedepot.com/p/" + r[1],
                clear: true, oos: !!r[8], cat: r[2],
@@ -1622,152 +1603,15 @@ function showCatalog(){
   });
 }
 
-/* ============================================================
-   LIVE STORE SCAN — run the bundled candidate pool against every
-   selected store through Home Depot's API. Slow but honest: each
-   hit is that store's real clearance price, not a guess.
-   ============================================================ */
-var scanAbort = false;
-
 function storeName(id){
   var s = (state.foundStores || []).filter(function(x){ return x.storeId === id; })[0];
-  return s ? s.storeName : "#" + id;
+  if(s) return s.storeName;
+  var h = HDSTORES && HDSTORES.filter(function(x){ return x[0] === id; })[0];
+  return h ? h[1] : "#" + id;
 }
 
-function scanStores(){
-  var stores = (state.pickedStores || []).slice();
-  if(!stores.length) return;
-  loadCatalog().then(function(d){
-    var pool = d.pool || (d.hits || []).map(function(h){ return [h[0], h[1], h[2]]; });
-    if(!pool.length){ $("sweepsum").textContent = "No candidate pool bundled to scan."; return; }
-    scanAbort = false;
-    $("scanstores").textContent = "■ Stop";
-    var hits = [], i = 0, si = 0, done = 0;
-    var total = pool.length * stores.length;
 
-    function next(){
-      if(scanAbort || si >= stores.length){ finish(); return; }
-      var item = pool[i], store = stores[si];
-      hdClearance(item[1], store).then(function(p){
-        var pr = p && p.pricing;
-        var cl = pr && pr.clearance;
-        if(cl && cl.value != null){
-          var label = ((p.identifiers || {}).productLabel) || item[0];
-          var st = stockAt(p);
-          hits.push([String(label).slice(0, 78), item[1], item[2],
-                     Math.round(cl.value * 100) / 100,
-                     Math.round((pr.value || 0) * 100) / 100,
-                     Math.round(cl.percentageOff || 0), store, st.qty, st.storeOnly ? 1 : 0]);
-          hits.sort(function(a, b){ return b[5] - a[5]; });
-        }
-      }).catch(function(){}).then(function(){
-        done++;
-        if(done % 5 === 0 || hits.length){
-          $("sweepsum").textContent = "Scanning " + done + " of " + total + " — " +
-            hits.length + " on clearance so far. Tap Stop any time to keep what's found.";
-        }
-        i++;
-        if(i >= pool.length){ i = 0; si++; }
-        setTimeout(next, 60);
-      });
-    }
 
-    function finish(){
-      state.storeHits = { hits: hits, at: Date.now(),
-                          stores: stores.map(storeName).join(", "), scanned: done };
-      save();
-      $("scanstores").textContent = "🔎 Scan stores";
-      sweepList = hits.map(function(r){
-        return { name: r[0], id: r[1], url: "https://www.homedepot.com/p/" + r[1],
-                 clear: true, oos: !!r[8], cat: r[2],
-                 price: r[3], was: r[4], pct: r[5], store: r[6],
-                 qty: (r[7] == null ? null : r[7]) };
-      });
-      sweepSource = "catalog";
-      renderSweep();
-    }
-
-    $("sweepsum").textContent = "Scanning " + pool.length + " products across " +
-      stores.length + " store" + (stores.length === 1 ? "" : "s") + "…";
-    next();
-  });
-}
-
-/* The launcher: month-matched categories plus HD's own savings
-   pages. The browser can't fetch homedepot.com itself, but the
-   shortcut can — so "Fetch here" hands the category URL straight
-   to it and the harvest lands back in this list. */
-function huntURL(q){
-  return q === "__savings"
-    ? "https://www.homedepot.com/c/Savings_Center"
-    : "https://www.homedepot.com/s/" + encodeURIComponent(q);
-}
-
-var sweepMode = "fetch";
-
-function shortcutURL(q){
-  var name = (state.shortcutName || "Send To Penny Run");
-  return "shortcuts://run-shortcut?name=" + encodeURIComponent(name) +
-         "&input=text&text=" + encodeURIComponent(huntURL(q));
-}
-
-function runHunt(q){
-  if(sweepMode === "browse"){ window.open(huntURL(q), "_blank", "noopener"); return; }
-  $("sweepsum").textContent = "Running your shortcut on that category… it fetches the page and comes back here with the candidates.";
-  /* remember we asked for a sweep, so an empty return is diagnosed
-     as a failed harvest rather than a mystery one-item share */
-  try{ localStorage.setItem("pennyrun.sweeppending", String(Date.now())); }catch(e){}
-  location.href = shortcutURL(q);
-}
-
-function sweepWasPending(){
-  var t = 0;
-  try{
-    t = parseInt(localStorage.getItem("pennyrun.sweeppending") || "0", 10);
-    localStorage.removeItem("pennyrun.sweeppending");
-  }catch(e){}
-  return t && (Date.now() - t) < 600000;
-}
-
-/* Category searches return a real product grid; Home Depot's
-   generic clearance and Savings Center pages are landing pages
-   that carry only a handful of promo tiles, so they are offered
-   for browsing but never as a fetch target. */
-var EVERGREEN_HUNT = [
-  ["Tools", "tools clearance"], ["Lighting", "lighting clearance"],
-  ["Storage", "storage clearance"], ["Appliances", "appliances clearance"]
-];
-
-function renderSweepPicker(){
-  var m = new Date().getMonth();
-  var picks = SEASON_HUNT[m].concat(EVERGREEN_HUNT);
-  var html = '<div class="seg" style="margin:8px 0 7px">';
-  html += '<button class="seg__b' + (sweepMode === "fetch" ? " is-on" : "") + '" data-smode="fetch">⚡ Fetch here</button>';
-  html += '<button class="seg__b' + (sweepMode === "browse" ? " is-on" : "") + '" data-smode="browse">🏬 Browse in HD</button>';
-  html += '</div>';
-  html += '<p class="scan__hint" style="margin:0 0 6px">' + (sweepMode === "fetch"
-    ? "Tap a category — your shortcut fetches it and the candidates land in this list. Specific categories work; Home Depot's generic clearance page has no product grid to harvest."
-    : "Opens at your store in the HD app; share the results page back here.") + '</p>';
-  html += '<div class="seg" style="margin-bottom:6px;flex-wrap:wrap">';
-  picks.forEach(function(p){
-    html += '<button class="seg__b" data-hunt="' + esc(p[1]) + '">' + esc(p[0]) + '</button>';
-  });
-  html += '</div>';
-  if(sweepMode === "browse"){
-    html += '<div class="seg" style="margin-bottom:6px">';
-    html += '<button class="seg__b" data-hunt="__savings">Savings Center</button>';
-    html += '<button class="seg__b" data-hunt="clearance">All clearance</button>';
-    html += '</div>';
-  }
-  html += '<div class="field" style="margin:0"><label class="field__l" for="f-scname">Shortcut name (must match exactly)</label>' +
-          '<input class="field__i" id="f-scname" placeholder="Send To Penny Run"></div>';
-  $("sweeppick").innerHTML = html;
-  $("f-scname").value = state.shortcutName || "";
-  $("f-scname").addEventListener("change", function(){
-    state.shortcutName = this.value.trim();
-    save();
-  });
-}
 
 function handleHDShare(text){
   /* a page with many product links is a sweep, not one item */
@@ -2236,7 +2080,7 @@ function renderStorePick(){
   var found = state.foundStores || [];
   var picked = state.pickedStores || [];
   $("storesum").textContent = picked.length
-    ? picked.length + " store" + (picked.length === 1 ? "" : "s") + " selected — Scan stores checks the sweep pool at each."
+    ? picked.length + " store" + (picked.length === 1 ? "" : "s") + " selected — tap Filter to my stores."
     : (found.length ? "Tap the stores you'd drive to." : "Enter your ZIP (or tap ⌖) to list nearby stores.");
   var html = "";
   found.forEach(function(s){
@@ -2245,7 +2089,8 @@ function renderStorePick(){
             (on ? ";border-color:var(--go);background:var(--go-bg)" : "") + '">';
     html +=   '<span class="cattile" style="background:' + (on ? "var(--go)" : "var(--ink)") + '">#' + esc(s.storeId) + '</span>';
     html +=   '<div style="flex:1;min-width:0"><b>' + esc(s.storeName) + '</b>';
-    html +=     '<span class="storeitem__addr">' + esc((s.address && s.address.street) || "") + '</span></div>';
+    html +=     '<span class="storeitem__addr">' + esc((s.address && s.address.street) || "") +
+                (s.miles != null && s.miles < 1e6 ? " · " + s.miles.toFixed(1) + " mi" : "") + '</span></div>';
     html +=   '<span class="storeitem__d">' + (on ? "✓" : "+") + '</span>';
     html += '</button>';
   });
@@ -2253,16 +2098,58 @@ function renderStorePick(){
   $("scanstores").hidden = !picked.length;
 }
 
+/* The bundled directory carries Home Depot's own store numbers, so
+   picking stores works offline — the browser can't call their API
+   directly (the CORS preflight is unanswered). */
+var HDSTORES = null;
+function loadHdStores(){
+  if(HDSTORES) return Promise.resolve(HDSTORES);
+  return fetch("hd-stores.json").then(function(r){ return r.json(); })
+    .then(function(d){ HDSTORES = d; return d; });
+}
+
+function showStores(list, note){
+  state.foundStores = list.map(function(s){
+    return { storeId: s[0], storeName: s[1],
+             address: { street: s[2], city: s[3], state: s[4], postalCode: s[5] },
+             miles: s.miles };
+  });
+  save(); renderStorePick();
+  if(note) $("storesum").textContent = note;
+}
+
 function lookupStores(zip){
-  $("storesum").textContent = "Asking Home Depot for stores near " + zip + "…";
-  hdStores(zip).then(function(list){
-    state.foundStores = list.map(function(s){
-      return { storeId: s.storeId, storeName: s.storeName, address: s.address };
-    });
-    save(); renderStorePick();
-    if(!list.length) $("storesum").textContent = "No stores came back for that ZIP.";
+  $("storesum").textContent = "Looking up stores near " + zip + "…";
+  loadHdStores().then(function(all){
+    var exact = all.filter(function(s){ return s[5] === zip; });
+    var pre3 = all.filter(function(s){ return (s[5] || "").slice(0, 3) === zip.slice(0, 3); });
+    var pick = exact.concat(pre3.filter(function(s){ return exact.indexOf(s) === -1; })).slice(0, 12);
+    if(!pick.length){
+      $("storesum").textContent = "No stores on file for " + zip + " — try ⌖ instead.";
+      return;
+    }
+    showStores(pick);
   }).catch(function(){
-    $("storesum").textContent = "Couldn't reach Home Depot just now — try again with signal.";
+    $("storesum").textContent = "Store directory didn't load — open the app online once.";
+  });
+}
+
+function lookupStoresByGeo(lat, lon){
+  return Promise.all([loadHdStores(), loadStores()]).then(function(r){
+    var hd = r[0], osm = r[1];
+    /* borrow coordinates from the mapped store list by postcode */
+    var zipPt = {};
+    osm.forEach(function(o){ if(o[4] && !zipPt[o[4]]) zipPt[o[4]] = [o[0], o[1]]; });
+    var scored = hd.map(function(s){
+      var p = zipPt[s[5]];
+      var copy = s.slice();
+      copy.miles = p ? distMi(lat, lon, p[0], p[1]) : 1e9;
+      return copy;
+    }).filter(function(s){ return s.miles < 1e8; });
+    scored.sort(function(a, b){ return a.miles - b.miles; });
+    var near = scored.slice(0, 10);
+    if(!near.length){ $("storesum").textContent = "Couldn't place you near a known store."; return; }
+    showStores(near);
   });
 }
 
@@ -2409,23 +2296,12 @@ $("f-zip").addEventListener("keydown", function(e){
   if(e.key === "Enter"){ e.preventDefault(); $("zipgo").click(); }
 });
 
-/* GPS can't name a ZIP on its own, so find the nearest bundled
-   store and borrow its postcode to ask Home Depot. */
 $("zipgps").addEventListener("click", function(){
   if(!navigator.geolocation){ $("storesum").textContent = "This browser won't share a location."; return; }
   $("storesum").textContent = "Finding you…";
   navigator.geolocation.getCurrentPosition(function(pos){
-    loadStores().then(function(st){
-      var la = pos.coords.latitude, lo = pos.coords.longitude, best = null, bd = 1e9;
-      st.forEach(function(s){
-        if(!s[4]) return;
-        var d = distMi(la, lo, s[0], s[1]);
-        if(d < bd){ bd = d; best = s; }
-      });
-      if(!best){ $("storesum").textContent = "No ZIP nearby — type yours instead."; return; }
-      $("f-zip").value = best[4];
-      lookupStores(best[4]);
-    }).catch(function(){ $("storesum").textContent = "Store data didn't load."; });
+    lookupStoresByGeo(pos.coords.latitude, pos.coords.longitude)
+      .catch(function(){ $("storesum").textContent = "Store directory didn't load."; });
   }, function(){ $("storesum").textContent = "Couldn't get a GPS fix — type your ZIP instead."; },
      { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 });
 });
@@ -2441,32 +2317,18 @@ $("storepick").addEventListener("click", function(e){
 });
 
 $("scanstores").addEventListener("click", function(){
-  if(this.textContent.indexOf("Stop") !== -1){ scanAbort = true; return; }
-  scanStores();
+  showCatalog();
 });
 
 $("catbtn").addEventListener("click", function(){
   if(sweepSource === "catalog" && sweepList.length){
     sweepList = []; renderSweep(); return;
   }
-  $("sweeppick").hidden = true;
-  $("sweepstart").textContent = "🧹 Fetch fresh";
-  showCatalog();
+    showCatalog();
 });
 
 
-$("sweepstart").addEventListener("click", function(){
-  var p = $("sweeppick");
-  if(p.hidden){ renderSweepPicker(); p.hidden = false; this.textContent = "Hide categories"; }
-  else { p.hidden = true; this.textContent = "🧹 Sweep a category"; }
-});
 
-$("sweeppick").addEventListener("click", function(e){
-  var mb = e.target.closest("[data-smode]");
-  if(mb){ sweepMode = mb.getAttribute("data-smode"); renderSweepPicker(); return; }
-  var b = e.target.closest("[data-hunt]");
-  if(b) runHunt(b.getAttribute("data-hunt"));
-});
 
 Array.prototype.forEach.call(document.querySelectorAll("[data-copy]"), function(b){
   b.addEventListener("click", function(){
