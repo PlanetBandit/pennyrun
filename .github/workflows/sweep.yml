@@ -27,7 +27,14 @@ permissions:
 
 jobs:
   sweep:
-    runs-on: ubuntu-latest
+    # GitHub's hosted runners cannot do this job. Home Depot's pricing API
+    # answers 206 "Generic Errors API" to every request from their address
+    # range -- measured with four header variants, all four refused, while
+    # the same code from a residential address gets 200. It is the IP, so
+    # no header or user-agent fixes it. Point this at a self-hosted runner
+    # on a home network (repo variable SWEEP_RUNNER = self-hosted) and the
+    # sweep works; until then the probe step says so on every run.
+    runs-on: ${{ vars.SWEEP_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 90
     steps:
       - name: Checkout

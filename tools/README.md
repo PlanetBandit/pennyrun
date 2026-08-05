@@ -64,6 +64,38 @@ clearance, which is the shallow national stuff. The deep store-level
 markdowns are on things nobody searches for — which is why they got
 marked down. `discover` exists because of this.
 
+## Where it can run — this one matters
+
+**GitHub's hosted runners cannot do this job.** Measured, not assumed:
+
+| host | from here | from a GitHub runner |
+|---|---|---|
+| `apionline.homedepot.com` (pricing) | 200 | **206 "Generic Errors API"** |
+| `www.homedepot.com/sitemap/…` | 200 | 200 |
+| `www.homedepot.com/s/…` (search) | 200 | **403** |
+
+Four header variants were tried from the runner — origin/referer, a
+desktop user-agent, apollo client headers, and the plain request. All
+four came back 206. The same four from a residential address all return
+200. It is the address range, so no user-agent or header fixes it.
+
+The failure mode is nasty: `call()` swallows exceptions and returns an
+empty list, so a blocked runner looks exactly like eight stores with
+nothing on clearance. The first real run reported `0 hits` at all eight
+stores in 6–9 seconds each, against 34–69 seconds for a working scan.
+The scan's safety rail refused to overwrite the list, and the `probe`
+stage now runs first so the reason is on the line that matters.
+
+**The fix is a self-hosted runner on a home network.** Register one
+against the repo, then set the repository variable `SWEEP_RUNNER` to
+`self-hosted` — the workflow reads it, so no code changes. An old
+laptop, a Pi, or anything that stays on overnight is enough; the job is
+~7 minutes of mostly waiting on the network.
+
+Until then the nightly run fails on the probe step every night, which is
+the honest signal that the list is not refreshing. Disable the workflow
+in the Actions tab if the noise is worse than the reminder.
+
 ## Which stores get swept
 
 Edit `tools/stores.json` — `[storeId, name]` pairs. Store ids come from
