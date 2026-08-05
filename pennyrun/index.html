@@ -453,7 +453,7 @@ input,select,textarea{font-family:inherit;font-size:16px}
     <input class="field__i" id="linkin" placeholder="Paste a Home Depot share link">
     <button class="btn btn--tag" id="linkgo">Read</button>
   </div>
-  <button class="btn btn--ghost btn--wide" id="shotbtn" style="margin-top:8px">📸 Read an HD app screenshot</button>
+  <button class="btn btn--ghost btn--wide" id="shotbtn" style="margin-top:8px">📸 Read HD app screenshots (pick several)</button>
   <p class="scan__hint">Paste a share link (tap Read with the box empty to grab it from your clipboard) — or screenshot the product page and the reader pulls the clearance price, online price, and save % out of it.</p>
 
   <details class="guide">
@@ -567,7 +567,7 @@ input,select,textarea{font-family:inherit;font-size:16px}
   <div class="flaglist is-on" data-f="go" id="flags-go"></div>
   <div class="flaglist" data-f="hold" id="flags-hold"></div>
   <div class="flaglist" data-f="stop" id="flags-stop"></div>
-  <p class="scan__hint" style="text-align:center;margin-top:16px">Penny Run · build v35</p>
+  <p class="scan__hint" style="text-align:center;margin-top:16px">Penny Run · build v36</p>
 </section>
 
 <!-- ============ ASSESSMENT SHEET ============ -->
@@ -643,7 +643,7 @@ input,select,textarea{font-family:inherit;font-size:16px}
   </div>
 </div>
 
-<input type="file" id="shotfile" accept="image/*" hidden>
+<input type="file" id="shotfile" accept="image/*" multiple hidden>
 
 <nav class="tabs">
   <button class="tab is-on" data-pane="scan"><span class="tab__g">▚</span>Scan</button>
@@ -1406,6 +1406,65 @@ function applyAppShot(p){
   return { clues: clues, ending: ending, summary: summary, bits: bits,
            name: p.name || "", model: p.model || "", sku: "", aisle: p.aisle || "",
            now: p.store, was: p.online, date: "" };
+}
+
+/* Batch import: the HD app is the only place a store's in-store
+   clearance panel exists, so reading a stack of screenshots is the
+   fastest legitimate way to log a whole browsing session. Each one
+   becomes its own scored item. */
+function readShotBatch(files){
+  var list = Array.prototype.slice.call(files);
+  var done = 0, made = [];
+  go("scan");
+  function step(){
+    if(!list.length){
+      var greens = made.filter(function(i){ return verdictOf(i).flag === "green"; }).length;
+      var yellows = made.filter(function(i){ return verdictOf(i).flag === "yellow"; }).length;
+      showRead(greens ? "go" : yellows ? "hold" : "stop", "📸",
+        "Read " + made.length + " screenshot" + (made.length === 1 ? "" : "s"),
+        greens + " green · " + yellows + " yellow · " + (made.length - greens - yellows) + " red", "",
+        "All of them are saved on the Checked tab — filter by flag, and reassess any that misread.",
+        [{ t:"Open Checked", c:"btn--tag", fn:function(){ go("checked"); } }]);
+      return;
+    }
+    var f = list.shift();
+    done++;
+    showRead("hold", "📸", "Reading screenshot " + done + " of " + (done + list.length),
+      "", "", "Pulling prices and clearance status out of each one…", []);
+    readOneShot(f, function(read){
+      var item = { id: "i-" + Date.now().toString(36) + "-" + done, at: Date.now(),
+                   name: (read && read.name) || "", upc: "", notes: "",
+                   clues: (read && read.clues) || {}, ending: (read && read.ending) || "", register: "" };
+      if(read){
+        if(read.now != null) item.now = read.now;
+        if(read.was != null) item.was = read.was;
+        if(read.aisle) item.notes = read.aisle;
+      }
+      state.items.unshift(item);
+      made.push(item);
+      save(); renderItems();
+      step();
+    });
+  }
+  step();
+}
+
+function readOneShot(file, cb){
+  var url = URL.createObjectURL(file);
+  var img = new Image();
+  img.onload = function(){
+    var scale = Math.min(1, 1600 / img.naturalWidth);
+    var c = document.createElement("canvas");
+    c.width = Math.round(img.naturalWidth * scale);
+    c.height = Math.round(img.naturalHeight * scale);
+    c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+    URL.revokeObjectURL(url);
+    initOCR().then(function(w){ return w.recognize(c); }).then(function(res){
+      cb(applyAppShot(parseAppShot(res && res.data ? res.data.text : "")));
+    }).catch(function(){ cb(null); });
+  };
+  img.onerror = function(){ URL.revokeObjectURL(url); cb(null); };
+  img.src = url;
 }
 
 function readShotFile(file){
@@ -2202,9 +2261,18 @@ Array.prototype.forEach.call(document.querySelectorAll("[data-copy]"), function(
 $("shotbtn").addEventListener("click", function(){ $("shotfile").click(); });
 $("sheetShot").addEventListener("click", function(){ $("shotfile").click(); });
 $("shotfile").addEventListener("change", function(){
-  var f = this.files && this.files[0];
+  /* copy the list out before clearing the input — clearing it
+     empties the FileList and the count would read as zero */
+  var list = Array.prototype.slice.call(this.files || []);
   this.value = "";
-  if(!f) return;
+  if(!list.length) return;
+  var f = list[0];
+  /* several at once, and not mid-sheet: batch them into items */
+  if(list.length > 1 && !$("sheet").classList.contains("is-on")){
+    pendingResume = null;
+    readShotBatch(list);
+    return;
+  }
   if($("sheet").classList.contains("is-on")){
     pendingResume = { id: editingId, values: collectSheet() };
     closeSheet();
