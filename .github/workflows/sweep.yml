@@ -12,6 +12,10 @@ on:
         description: "Re-harvest the product pool before scanning"
         type: boolean
         default: false
+      probe_only:
+        description: "Just report what each Home Depot host does from the runner"
+        type: boolean
+        default: false
 
 # One sweep at a time; a queued run would only fight over the same file.
 concurrency:
@@ -34,14 +38,23 @@ jobs:
         with:
           python-version: "3.12"
 
+      # Home Depot's hosts sit behind a bot filter, and whether a given
+      # runner gets past it is not something the code can assume.
+      - name: Can this runner reach Home Depot?
+        run: python3 tools/sweep.py probe
+
       - name: Harvest the product pool
-        if: github.event.schedule == '10 8 * * 0' || inputs.harvest
+        if: (github.event.schedule == '10 8 * * 0' || inputs.harvest) && !inputs.probe_only
         run: python3 tools/sweep.py harvest
 
       # Walk the next slice of Home Depot's 4.2M-product sitemap at one
       # rotating store. Cheap per product, and anything found on clearance
       # is promoted to the hot list and priced at every store from then on.
+      # Marked red when it fails but never blocks the scan: discovery only
+      # widens the net, and last night's net still catches tonight's prices.
       - name: Discover
+        if: ${{ !inputs.probe_only }}
+        continue-on-error: true
         run: python3 tools/sweep.py discover
         env:
           SWEEP_SLICE: ${{ vars.SWEEP_SLICE || '60000' }}
@@ -49,9 +62,11 @@ jobs:
       # sweep.py refuses to overwrite the list when a run comes back empty
       # or collapsed, so a bad night leaves yesterday's data in place.
       - name: Scan every store
+        if: ${{ !inputs.probe_only }}
         run: python3 tools/sweep.py scan
 
       - name: Commit the new list
+        if: ${{ !inputs.probe_only }}
         run: |
           git config user.name "penny-run-sweep"
           git config user.email "penny-run-sweep@users.noreply.github.com"

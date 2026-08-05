@@ -723,6 +723,8 @@ var CLUES = [
   ["appclear", "HD app shows an in-store clearance price", "Product-page banner — solid confirmation it's on clearance. Screenshot it and let the 📸 reader fill this in.", 2, false],
   ["outplace", "Stock out of place, or the home shelf is pulled", "Orphans and empty home shelves late in the cycle.", 1, false],
   ["deep",     "70%+ off the “was” price", "Deep cuts mean late in the markdown cycle.", 1, false],
+  ["sup",      "Home Depot lists a replacement for it", "A designated successor SKU means it's being phased out. Runs ten times richer among clearance items than among everything else; the sweep fills this in.", 1, false],
+  ["fell",     "Price dropped since last night's sweep", "Markdowns cascade, and one still in motion is on its way down. The sweep fills this in.", 1, false],
   ["promo",    "Yellow tag but NO date and NO “was” price", "That's a promo or plain price, not clearance.", -2, true]
 ];
 
@@ -1216,6 +1218,11 @@ function applyCatalog(item, rows){
   item.clues = item.clues || {};
   item.clues.appclear = true;
   if(b.pct >= 70) item.clues.deep = true;
+  if(b.sup) item.clues.sup = true;
+  if(b.drop != null) item.clues.fell = true;
+  /* store-only is NOT scored on purpose: measured across 636 products it
+     runs 14% among clearance items against 22% among everything else, so
+     it points the wrong way. It stays on the row as information. */
   if(!item.name) item.name = b.name;
   if(item.now == null) item.now = b.price;
   if(item.was == null) item.was = b.was;

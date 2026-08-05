@@ -238,16 +238,27 @@ def discover():
     cur = read(CURSOR, {"shard": 0, "offset": 0, "store": 0})
     sid, sname = stores[cur.get("store", 0) % len(stores)]
 
-    shards = LOC.findall(get(SITEMAP))
+    # www.homedepot.com sits behind a bot filter that some datacentre ranges
+    # never get past, while apionline.homedepot.com answers fine from the same
+    # host. Say so loudly rather than quietly discovering nothing every night.
+    try:
+        body = get(SITEMAP)
+    except Exception as e:
+        die("discover: could not reach the sitemap (%s). The pricing API and "
+            "www.homedepot.com are different hosts -- this one is blocking us." % e)
+    shards = LOC.findall(body)
     if not shards:
-        say("discover: no sitemap shards came back -- skipping")
-        return
+        die("discover: the sitemap answered with no <loc> entries in %d bytes. "
+            "That is a bot-block page, not an empty catalogue." % len(body))
+
     shard = cur.get("shard", 0) % len(shards)
     offset = cur.get("offset", 0)
 
     urls = LOC.findall(get(shards[shard], timeout=120))
     ids = [m.group(1) for m in
            (re.search(r"/(\d{6,})/?$", u) for u in urls) if m]
+    if not ids:
+        die("discover: shard %d listed %d urls and no product ids" % (shard, len(urls)))
     window = ids[offset:offset + SLICE]
     if not window:
         window, shard, offset = ids[:SLICE], shard, 0
@@ -491,7 +502,38 @@ def die(msg):
     sys.exit(1)
 
 
-STAGES = {"harvest": harvest, "discover": discover, "scan": scan}
+def probe():
+    """Say exactly what each host does when we knock, with no retries and no
+       swallowed exceptions. The scan hides failures behind empty results on
+       purpose -- this is the stage that refuses to."""
+    body = json.dumps({"operationName": "q", "variables": {"ids": ["205606416"]},
+                       "query": QLITE % "2577"}).encode()
+    checks = [
+        ("pricing API", urllib.request.Request(API, data=body, headers={
+            "Content-Type": "application/json",
+            "x-experience-name": "general-merchandise", "User-Agent": UA})),
+        ("sitemap", urllib.request.Request(SITEMAP, headers={"User-Agent": UA})),
+        ("search page", urllib.request.Request(
+            "https://www.homedepot.com/s/mulch%20clearance", headers={"User-Agent": UA})),
+    ]
+    bad = 0
+    for name, req in checks:
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                text = r.read(400).decode("utf-8", "replace").replace("\n", " ")
+                say("  %-12s HTTP %s  %s" % (name, r.status, text[:220]))
+        except urllib.error.HTTPError as e:
+            bad += 1
+            say("  %-12s HTTP %s  %s" % (name, e.code,
+                                         e.read(220).decode("utf-8", "replace").replace("\n", " ")))
+        except Exception as e:
+            bad += 1
+            say("  %-12s FAILED  %s" % (name, e))
+    if bad:
+        die("%d of %d hosts refused us from this machine" % (bad, len(checks)))
+
+
+STAGES = {"harvest": harvest, "discover": discover, "scan": scan, "probe": probe}
 
 if __name__ == "__main__":
     wanted = sys.argv[1:] or ["scan"]
