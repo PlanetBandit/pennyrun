@@ -146,7 +146,7 @@ input,select,textarea{font-family:inherit;font-size:16px}
 .read--stop .read__icon{background:var(--stop);color:#fff}
 .read--stop .read__label{color:var(--stop)}
 .read__body{padding:0 13px 11px}
-.read__note{font-size:13px;margin:0 0 8px;line-height:1.45}
+.read__note{font-size:13px;margin:0 0 8px;line-height:1.45;white-space:pre-line}
 .read__acts{display:flex;flex-wrap:wrap;gap:6px}
 
 /* ---------- buttons ---------- */
@@ -567,7 +567,7 @@ input,select,textarea{font-family:inherit;font-size:16px}
   <div class="flaglist is-on" data-f="go" id="flags-go"></div>
   <div class="flaglist" data-f="hold" id="flags-hold"></div>
   <div class="flaglist" data-f="stop" id="flags-stop"></div>
-  <p class="scan__hint" style="text-align:center;margin-top:16px">Penny Run · build v33</p>
+  <p class="scan__hint" style="text-align:center;margin-top:16px">Penny Run · build v34</p>
 </section>
 
 <!-- ============ ASSESSMENT SHEET ============ -->
@@ -1577,9 +1577,12 @@ function handleHDShare(text){
      Match pattern without the /p/ piece. Say so instead of opening
      a meaningless one-item sheet. */
   if(pending || (p.url && /\/(s|b|c)\//i.test(p.url) && !/\/p\//i.test(p.url))){
+    var got = String(text || "").trim();
+    var preview = got ? got.replace(/\s+/g, " ").slice(0, 220) : "(nothing at all)";
     showRead("hold", "!", "Category page — no products harvested",
       sweep.length ? sweep.length + " link(s) found, need 4+" : "No product links in what came back", "",
-      "Your shortcut reached the category page but sent back no products. Most likely its Match Text pattern predates Sweep and is missing the /p/ piece that harvests product links — copy the current pattern from the setup guide and paste it over the one in your shortcut. If it still comes back empty, Home Depot served the shortcut a page with nothing in it; use 🏬 Browse in HD instead.",
+      "Your shortcut reached the category page but sent back no products. Most likely its Match Text pattern is missing the /p/ piece that harvests product links — copy the current pattern from the setup guide and paste it over the one in your shortcut.\n\nWhat actually arrived (" +
+      got.length + " chars): " + preview,
       [{ t:"Open the setup guide", c:"btn--tag", fn:function(){
           go("scan");
           var g = document.querySelector(".guide");
