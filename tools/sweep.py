@@ -45,12 +45,23 @@ from concurrent.futures import ThreadPoolExecutor
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-POOL = os.path.join(HERE, "pool.json")
-HOT = os.path.join(HERE, "hot.json")
-CURSOR = os.path.join(HERE, "cursor.json")
-PRICES = os.path.join(HERE, "prices.json")
-STORES = os.path.join(HERE, "stores.json")
-OUT = os.path.join(ROOT, "pennyrun", "clearance.json")
+
+# On a server the checkout has to stay pristine or every deploy turns into
+# a merge conflict with last night's sweep. Point PENNYRUN_DATA somewhere
+# writable outside git and the state files follow; the repo copies are the
+# seed, read once if the data directory is still empty.
+DATA = os.environ.get("PENNYRUN_DATA") or HERE
+POOL = os.path.join(DATA, "pool.json")
+HOT = os.path.join(DATA, "hot.json")
+CURSOR = os.path.join(DATA, "cursor.json")
+PRICES = os.path.join(DATA, "prices.json")
+SEED = HERE  # shipped starting state, never written to
+
+# Likewise the app's list: served from the data directory on a server, and
+# written straight into the site folder when running from a checkout.
+OUT = os.environ.get("PENNYRUN_OUT") or os.path.join(ROOT, "pennyrun", "clearance.json")
+
+STORES = os.environ.get("PENNYRUN_STORES") or os.path.join(HERE, "stores.json")
 
 API = "https://apionline.homedepot.com/federation-gateway/graphql"
 SITEMAP = "https://www.homedepot.com/sitemap/P/PIPs.xml"
@@ -423,13 +434,21 @@ def pick(hits):
     """
     # within a group: what moved last night first, then the deepest cut
     order = lambda r: (0 if r[14] is not None else 1, -r[5])
+
+    # A price that fell last night is the single strongest lead, and the
+    # round-robin below can crowd one out if its department is busy. Give
+    # drops first claim on up to half the slots, then deal out the rest.
+    fell = sorted((r for r in hits if r[14] is not None), key=order)[:SHIP // 2]
+    claimed = set(id(r) for r in fell)
+    rest = [r for r in hits if id(r) not in claimed]
+
     groups = {}
-    for r in hits:
+    for r in rest:
         groups.setdefault((r[6], r[2] or "?"), []).append(r)
     for g in groups.values():
         g.sort(key=order)
 
-    out, rank = [], 0
+    out, rank = list(fell), 0
     keys = sorted(groups)
     while len(out) < SHIP:
         took = 0
@@ -482,15 +501,27 @@ def load_pool():
 
 
 def read(path, default):
-    try:
-        return json.load(open(path))
-    except Exception:
-        return default
+    """Read a state file, falling back to the copy shipped in the repo the
+       first time a server runs with an empty data directory."""
+    for candidate in (path, os.path.join(SEED, os.path.basename(path))):
+        try:
+            return json.load(open(candidate))
+        except Exception:
+            continue
+    return default
 
 
 def write(path, data, small=False):
-    json.dump(data, open(path, "w"), separators=(",", ":") if small else None,
-              indent=None if small else 0)
+    d = os.path.dirname(path)
+    if d and not os.path.isdir(d):
+        os.makedirs(d, exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(data, f, separators=(",", ":") if small else None,
+                  indent=None if small else 0)
+    # the web server may read clearance.json at any moment; swap it in whole
+    # rather than let a phone catch a half-written file
+    os.replace(tmp, path)
 
 
 def say(msg):

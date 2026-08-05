@@ -1,0 +1,42 @@
+# Penny Run — served from the droplet.
+#
+# Caddy gets and renews the certificate on its own, which is the whole
+# point: iOS will not hand the camera to a page that is not a secure
+# context, so HTTPS is not optional for this app.
+#
+# setup.sh fills in the two placeholders.
+
+{$PENNYRUN_HOST} {
+	encode gzip zstd
+
+	# The sweep rewrites this nightly and it lives outside the git checkout,
+	# so a deploy never collides with last night's data. Served with no-cache
+	# because a phone holding last week's list is the whole failure mode this
+	# rebuild was meant to end.
+	handle /clearance.json {
+		root * {$PENNYRUN_DATA}
+		header Cache-Control "no-cache"
+		file_server
+	}
+
+	handle {
+		root * {$PENNYRUN_ROOT}
+
+		# Every open should pick up the current build rather than whatever
+		# was cached at install time.
+		@shell path / /index.html /sw.js /manifest.webmanifest
+		header @shell Cache-Control "no-cache"
+
+		# The heavy assets change only with a build, and the service worker
+		# cache name carries the version, so these can sit still.
+		@static path /ocr/* /zxing.min.js /stores.json /hd-stores.json /*.png
+		header @static Cache-Control "public, max-age=604800"
+
+		file_server
+	}
+
+	log {
+		output file /var/log/caddy/pennyrun.log
+		format console
+	}
+}
