@@ -569,7 +569,7 @@ input,select,textarea{font-family:inherit;font-size:16px}
   <div class="flaglist is-on" data-f="go" id="flags-go"></div>
   <div class="flaglist" data-f="hold" id="flags-hold"></div>
   <div class="flaglist" data-f="stop" id="flags-stop"></div>
-  <p class="scan__hint" style="text-align:center;margin-top:16px">Penny Run · build v37</p>
+  <p class="scan__hint" style="text-align:center;margin-top:16px">Penny Run · build v38</p>
 </section>
 
 <!-- ============ ASSESSMENT SHEET ============ -->
@@ -1533,10 +1533,15 @@ function renderSweep(){
     $("sweeplist").innerHTML = "";
     return;
   }
-  if(sweepSource === "catalog"){
+  if(sweepSource === "catalog" && catFilter === "__hits"){
+    $("sweepsum").textContent = list.length + " products confirmed carrying the in-store clearance tag" +
+      (CATALOG && CATALOG.store ? " at store #" + CATALOG.store : "") +
+      (CATALOG && CATALOG.harvested ? ", checked " + CATALOG.harvested : "") +
+      ". Prices are what the tag says — the register still has the final word.";
+  } else if(sweepSource === "catalog"){
     $("sweepsum").textContent = list.length + " products from Home Depot clearance searches" +
       (CATALOG && CATALOG.harvested ? " (catalog built " + CATALOG.harvested + ")" : "") +
-      ". Not confirmed markdowns — tap one to open it and check its real price and clearance panel.";
+      ". Not confirmed markdowns — tap 🏷️ On clearance for the verified ones.";
   } else {
     var flagged = list.filter(function(c){ return c.clear || c.oos; }).length;
     $("sweepsum").textContent = flagged
@@ -1554,8 +1559,14 @@ function renderSweep(){
     var badge = c.clear ? "🏷️" : c.oos ? "🚫" : "·";
     html += '<button class="storeitem" data-sweep="' + i + '" style="width:100%;text-align:left">';
     html +=   '<div style="flex:1;min-width:0"><b>' + esc(c.name.slice(0, 60)) + '</b>';
-    html +=     '<span class="storeitem__addr">' + (c.clear ? "clearance signal · " : c.oos ? "online-unavailable · " : "") + "#" + esc(c.id) + '</span></div>';
-    html +=   '<span class="storeitem__d">' + badge + " ↗</span>";
+    if(c.price != null){
+      html +=   '<span class="storeitem__addr"><b style="color:var(--go);display:inline">$' + c.price.toFixed(2) +
+                '</b> was $' + (c.was || 0).toFixed(2) + ' · ' + c.pct + '% off</span></div>';
+      html +=   '<span class="storeitem__d">' + badge + " ↗</span>";
+    } else {
+      html +=     '<span class="storeitem__addr">' + (c.clear ? "clearance signal · " : c.oos ? "online-unavailable · " : "") + "#" + esc(c.id) + '</span></div>';
+      html +=   '<span class="storeitem__d">' + badge + " ↗</span>";
+    }
     html += '</button>';
   });
   $("sweeplist").innerHTML = html;
@@ -1583,13 +1594,26 @@ function loadCatalog(){
     .then(function(d){ CATALOG = d; return d; });
 }
 
+/* hits carry [name, id, cat, clearancePrice, wasPrice, pctOff] and
+   were confirmed against Home Depot's own pricing API — those are
+   the "See In-Store Clearance Price" items. */
 function showCatalog(){
   loadCatalog().then(function(d){
-    var rows = d.items.filter(function(r){ return !catFilter || r[2] === catFilter; });
-    sweepList = rows.map(function(r){
-      return { name: r[0], id: r[1], url: "https://www.homedepot.com/p/" + r[1],
-               clear: false, oos: false, cat: r[2] };
-    });
+    var rows;
+    if(catFilter === "__hits"){
+      rows = (d.hits || []).map(function(r){
+        return { name: r[0], id: r[1], url: "https://www.homedepot.com/p/" + r[1],
+                 clear: true, oos: false, cat: r[2],
+                 price: r[3], was: r[4], pct: r[5] };
+      });
+    } else {
+      rows = d.items.filter(function(r){ return !catFilter || r[2] === catFilter; })
+        .map(function(r){
+          return { name: r[0], id: r[1], url: "https://www.homedepot.com/p/" + r[1],
+                   clear: false, oos: false, cat: r[2] };
+        });
+    }
+    sweepList = rows;
     sweepSource = "catalog";
     renderSweep();
     renderCatPicker();
@@ -1605,6 +1629,10 @@ function renderCatPicker(){
   CATALOG.items.forEach(function(r){ if(cats.indexOf(r[2]) === -1) cats.push(r[2]); });
   cats.sort();
   var html = '<div class="seg" style="margin:8px 0 4px;flex-wrap:wrap">';
+  if(CATALOG.hits && CATALOG.hits.length){
+    html += '<button class="seg__b' + (catFilter === "__hits" ? " is-on" : "") +
+            '" data-cat="__hits" style="flex:2">🏷️ On clearance (' + CATALOG.hits.length + ')</button>';
+  }
   html += '<button class="seg__b' + (catFilter ? "" : " is-on") + '" data-cat="">All</button>';
   cats.forEach(function(c){
     html += '<button class="seg__b' + (catFilter === c ? " is-on" : "") + '" data-cat="' + esc(c) + '">' + esc(c) + '</button>';
