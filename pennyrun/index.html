@@ -567,7 +567,7 @@ input,select,textarea{font-family:inherit;font-size:16px}
   <div class="flaglist is-on" data-f="go" id="flags-go"></div>
   <div class="flaglist" data-f="hold" id="flags-hold"></div>
   <div class="flaglist" data-f="stop" id="flags-stop"></div>
-  <p class="scan__hint" style="text-align:center;margin-top:16px">Penny Run · build v31</p>
+  <p class="scan__hint" style="text-align:center;margin-top:16px">Penny Run · build v32</p>
 </section>
 
 <!-- ============ ASSESSMENT SHEET ============ -->
@@ -1529,7 +1529,19 @@ function shortcutURL(q){
 function runHunt(q){
   if(sweepMode === "browse"){ window.open(huntURL(q), "_blank", "noopener"); return; }
   $("sweepsum").textContent = "Running your shortcut on that category… it fetches the page and comes back here with the candidates.";
+  /* remember we asked for a sweep, so an empty return is diagnosed
+     as a failed harvest rather than a mystery one-item share */
+  try{ localStorage.setItem("pennyrun.sweeppending", String(Date.now())); }catch(e){}
   location.href = shortcutURL(q);
+}
+
+function sweepWasPending(){
+  var t = 0;
+  try{
+    t = parseInt(localStorage.getItem("pennyrun.sweeppending") || "0", 10);
+    localStorage.removeItem("pennyrun.sweeppending");
+  }catch(e){}
+  return t && (Date.now() - t) < 600000;
 }
 
 function renderSweepPicker(){
@@ -1563,7 +1575,9 @@ function renderSweepPicker(){
 function handleHDShare(text){
   /* a page with many product links is a sweep, not one item */
   var sweep = parseSweep(text);
+  var pending = sweepWasPending();
   if(sweep.length >= 4){ showSweep(sweep); return; }
+  if(pending && sweep.length){ showSweep(sweep); return; } /* small but real harvest */
 
   var p = parseHDShare(text);
 
@@ -1571,7 +1585,7 @@ function handleHDShare(text){
      shortcut fetched it but didn't harvest links — almost always a
      Match pattern without the /p/ piece. Say so instead of opening
      a meaningless one-item sheet. */
-  if(p.url && /\/(s|b|c)\//i.test(p.url) && !/\/p\//i.test(p.url)){
+  if(pending || (p.url && /\/(s|b|c)\//i.test(p.url) && !/\/p\//i.test(p.url))){
     showRead("hold", "!", "Category page — no products harvested",
       sweep.length ? sweep.length + " link(s) found, need 4+" : "No product links in what came back", "",
       "Your shortcut reached the category page but sent back no products. Most likely its Match Text pattern predates Sweep and is missing the /p/ piece that harvests product links — copy the current pattern from the setup guide and paste it over the one in your shortcut. If it still comes back empty, Home Depot served the shortcut a page with nothing in it; use 🏬 Browse in HD instead.",
