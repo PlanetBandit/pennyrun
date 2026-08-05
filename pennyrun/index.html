@@ -39,6 +39,10 @@
   --lift:0 1px 2px rgba(20,22,26,.06);
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+/* class-level display rules otherwise beat the hidden attribute,
+   which would leave flex elements (tag capture bar, torch, Clear)
+   visible when the code has hidden them */
+[hidden]{display:none !important}
 html,body{margin:0;padding:0}
 body{
   background:var(--concrete);
@@ -510,11 +514,15 @@ input,select,textarea{font-family:inherit;font-size:16px}
 
 <!-- ============ CHECKED ============ -->
 <section class="pane" id="pane-checked">
-  <div id="sweepwrap" hidden style="margin-bottom:16px">
-    <p class="pane__title">Sweep candidates</p>
+  <div id="sweepwrap" style="margin-bottom:18px">
+    <p class="pane__title">Sweep — find candidates</p>
     <p class="scan__hint" id="sweepsum" style="margin:0 0 8px"></p>
     <div id="sweeplist"></div>
-    <button class="btn btn--ghost btn--wide btn--sm" id="sweepclear" style="margin-top:2px">Clear candidates</button>
+    <div id="sweeppick" hidden></div>
+    <div style="display:flex;gap:6px;margin-top:8px">
+      <button class="btn btn--tag btn--sm" id="sweepstart" style="flex:1">🧹 Sweep a category</button>
+      <button class="btn btn--ghost btn--sm" id="sweepclear" hidden>Clear</button>
+    </div>
   </div>
 
   <p class="pane__title">Checked items</p>
@@ -558,7 +566,7 @@ input,select,textarea{font-family:inherit;font-size:16px}
   <div class="flaglist is-on" data-f="go" id="flags-go"></div>
   <div class="flaglist" data-f="hold" id="flags-hold"></div>
   <div class="flaglist" data-f="stop" id="flags-stop"></div>
-  <p class="scan__hint" style="text-align:center;margin-top:16px">Penny Run · build v27</p>
+  <p class="scan__hint" style="text-align:center;margin-top:16px">Penny Run · build v28</p>
 </section>
 
 <!-- ============ ASSESSMENT SHEET ============ -->
@@ -924,6 +932,23 @@ function ripeness(item){
   if(cl.was) s += 3;
   return Math.min(99, s);
 }
+
+/* Month-matched hunting grounds: [button label, HD search query].
+   Paired with SEASON so the launcher points at whatever resets now. */
+var SEASON_HUNT = [
+  [["Holiday decor","christmas decor clearance"],["Toys","toys clearance"],["Storage totes","storage totes clearance"]],
+  [["Holiday last call","holiday decor clearance"],["Heaters","space heater clearance"],["Valentine's","valentines clearance"]],
+  [["Snow & winter","snow removal clearance"],["Heaters","space heater clearance"],["Easter","easter clearance"]],
+  [["Easter","easter clearance"],["Winter last call","snow removal clearance"],["Garden reset","garden center clearance"]],
+  [["Cleaning","cleaning supplies clearance"],["Garden","garden plants clearance"],["Gifts","gift sets clearance"]],
+  [["Patio","patio furniture clearance"],["Garden decor","garden decor clearance"],["Tool sets","tool set clearance"]],
+  [["Patriotic","patriotic decor clearance"],["Patio","patio furniture clearance"],["Lawn care","lawn fertilizer clearance"]],
+  [["Patio","patio furniture clearance"],["Fans & AC","fans clearance"],["Pools","pools clearance"]],
+  [["Patio last call","patio furniture clearance"],["Grills","grills clearance"],["Storage","storage clearance"]],
+  [["Summer final","patio clearance"],["Garden","garden clearance"],["Fall decor","fall decor clearance"]],
+  [["Halloween","halloween clearance"],["Fall decor","fall decor clearance"],["Christmas","christmas decor clearance"]],
+  [["Candy & gifts","gift sets clearance"],["Tool kits","tool set clearance"],["Christmas","christmas decor clearance"]]
+];
 
 var SEASON = [
   ["Christmas & holiday decor (deepest clearance)", "Toys and gift sets", "Storage totes"],
@@ -1437,14 +1462,18 @@ function parseSweep(text){
 
 var sweepList = [];
 
-function showSweep(list){
-  sweepList = list;
-  go("checked");
-  var el = $("sweepwrap");
-  el.hidden = false;
+function renderSweep(){
+  var list = sweepList;
+  $("sweepclear").hidden = !list.length;
+  if(!list.length){
+    $("sweepsum").textContent = "Turn a whole category into a candidate list: open a clearance category at your store, then share that results page back here.";
+    $("sweeplist").innerHTML = "";
+    return;
+  }
   var flagged = list.filter(function(c){ return c.clear || c.oos; }).length;
   $("sweepsum").textContent = list.length + " products found" +
-    (flagged ? " · " + flagged + " show a clearance or online-unavailable signal" : "") + ". Tap to open at your store, then share the keepers back.";
+    (flagged ? " · " + flagged + " show a clearance or online-unavailable signal" : "") +
+    ". Tap to open at your store, then share the keepers back.";
   var html = "";
   list.forEach(function(c, i){
     var badge = c.clear ? "🏷️" : c.oos ? "🚫" : "·";
@@ -1455,6 +1484,31 @@ function showSweep(list){
     html += '</button>';
   });
   $("sweeplist").innerHTML = html;
+}
+
+function showSweep(list){
+  sweepList = list;
+  $("sweeppick").hidden = true;
+  renderSweep();
+  go("checked");
+}
+
+/* The launcher: month-matched categories plus HD's own savings
+   pages. The app can't fetch these itself (the browser blocks
+   cross-site reads), so each opens in the HD app to share back. */
+function renderSweepPicker(){
+  var m = new Date().getMonth();
+  var picks = SEASON_HUNT[m].slice();
+  var html = '<p class="scan__hint" style="margin:8px 0 6px">Open one at your store, then <b>share the results page</b> back to Penny Run:</p>';
+  html += '<div class="seg" style="margin-bottom:6px">';
+  picks.forEach(function(p){
+    html += '<button class="seg__b" data-hunt="' + esc(p[1]) + '">' + esc(p[0]) + '</button>';
+  });
+  html += '</div><div class="seg">';
+  html += '<button class="seg__b" data-hunt="__savings">Savings Center</button>';
+  html += '<button class="seg__b" data-hunt="clearance">All clearance</button>';
+  html += '</div>';
+  $("sweeppick").innerHTML = html;
 }
 
 function handleHDShare(text){
@@ -2031,7 +2085,22 @@ $("sweeplist").addEventListener("click", function(e){
   if(c) window.open(c.url, "_blank", "noopener");
 });
 $("sweepclear").addEventListener("click", function(){
-  sweepList = []; $("sweepwrap").hidden = true; $("sweeplist").innerHTML = "";
+  sweepList = []; renderSweep();
+});
+
+$("sweepstart").addEventListener("click", function(){
+  var p = $("sweeppick");
+  if(p.hidden){ renderSweepPicker(); p.hidden = false; this.textContent = "Hide categories"; }
+  else { p.hidden = true; this.textContent = "🧹 Sweep a category"; }
+});
+
+$("sweeppick").addEventListener("click", function(e){
+  var b = e.target.closest("[data-hunt]");
+  if(!b) return;
+  var q = b.getAttribute("data-hunt");
+  window.open(q === "__savings"
+    ? "https://www.homedepot.com/c/Savings_Center"
+    : "https://www.homedepot.com/s/" + encodeURIComponent(q), "_blank", "noopener");
 });
 
 Array.prototype.forEach.call(document.querySelectorAll("[data-copy]"), function(b){
@@ -2114,6 +2183,7 @@ renderItems();
 renderSteps();
 renderFlags();
 renderMyStore();
+renderSweep();
 setMode("assess", null);
 
 (function(){
