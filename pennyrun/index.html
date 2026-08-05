@@ -494,49 +494,31 @@ input,select,textarea{font-family:inherit;font-size:16px}
   </details>
 </section>
 
-<!-- ============ STORES ============ -->
-<section class="pane" id="pane-stores">
-  <p class="pane__title">Store locator</p>
-  <p class="scan__hint" style="margin:0 0 8px">Nearest Home Depots by GPS — 2,300+ stores bundled in, so it works with zero bars.</p>
-  <button class="btn btn--tag btn--wide" id="locbtn">⌖ Find stores near me</button>
-  <div id="storelist" style="margin-top:10px"></div>
-  <p class="scan__hint">Straight-line distances. Locations © OpenStreetMap contributors.</p>
-
-  <p class="pane__title" style="margin-top:20px">My store</p>
-  <p class="scan__hint" style="margin:0 0 8px" id="mystoreSum"></p>
-  <div style="display:flex;gap:6px">
-    <div class="field" style="flex:1"><label class="field__l" for="f-storenum">Store #</label>
-      <input class="field__i field__i--mono" id="f-storenum" inputmode="numeric" placeholder="2582"></div>
-    <div class="field" style="flex:2"><label class="field__l" for="f-storename">Name (optional)</label>
-      <input class="field__i" id="f-storename" placeholder="Parkville"></div>
-  </div>
-  <button class="btn btn--tag btn--wide" id="storeSave">Save my store</button>
-  <div id="mystoreTools" hidden style="margin-top:12px">
-    <div class="warn" style="margin-bottom:10px">
-      <b>Where store-specific clearance actually comes from.</b> Pages the shortcut fetches are anonymous — testing showed Home Depot ignores a hand-set store cookie and returns a random store, so those fetches give you the online price, name, and general availability, but <b>not</b> your store's clearance price. For that number, open the item in the HD app (where your store really is set) and use <b>📸 From a screenshot</b> — that reads the in-store clearance panel directly.
-    </div>
-    <div class="copyrow" hidden><code id="cookieVal"></code></div>
-    <p class="field__l">Hunt at my store</p>
-    <div style="display:flex;gap:6px">
-      <button class="btn btn--ghost" id="browseSavings" style="flex:1">Savings Center ↗</button>
-      <button class="btn btn--ghost" id="browseClear" style="flex:1">Clearance search ↗</button>
-    </div>
-    <p class="scan__hint" style="margin-top:6px">Open these in the HD app with your store set, browse a category, then <b>share the results page itself</b> to Penny Run — it harvests every product into a Sweep candidate list on the Checked tab, flagging clearance and online-unavailable signals. Tap a keeper to open it, then share it back for the full verdict.</p>
-  </div>
-</section>
 
 <!-- ============ CHECKED ============ -->
 <section class="pane" id="pane-checked">
   <div id="sweepwrap" style="margin-bottom:18px">
-    <p class="pane__title">Sweep — find candidates</p>
-    <p class="scan__hint" id="sweepsum" style="margin:0 0 8px"></p>
+    <p class="pane__title">Clearance sweep</p>
+
+    <div id="storebar">
+      <p class="scan__hint" id="storesum" style="margin:0 0 6px"></p>
+      <div class="linkbox" style="margin-bottom:6px">
+        <input class="field__i field__i--mono" id="f-zip" inputmode="numeric" placeholder="ZIP code" maxlength="5">
+        <button class="btn btn--ghost btn--sm" id="zipgo">Find</button>
+        <button class="btn btn--ghost btn--sm" id="zipgps">⌖</button>
+      </div>
+      <div id="storepick"></div>
+    </div>
+
+    <p class="scan__hint" id="sweepsum" style="margin:8px 0"></p>
     <div id="sweeplist"></div>
     <div id="sweeppick" hidden></div>
     <div style="display:flex;gap:6px;margin-top:8px">
-      <button class="btn btn--tag btn--sm" id="catbtn" style="flex:1">📖 Browse clearance</button>
-      <button class="btn btn--ghost btn--sm" id="sweepstart" style="flex:1">🧹 Fetch fresh</button>
+      <button class="btn btn--tag btn--sm" id="catbtn" style="flex:1">📖 Show clearance</button>
+      <button class="btn btn--go btn--sm" id="scanstores" style="flex:1" hidden>🔎 Scan stores</button>
       <button class="btn btn--ghost btn--sm" id="sweepclear" hidden>Clear</button>
     </div>
+    <button class="btn btn--ghost btn--wide btn--sm" id="sweepstart" style="margin-top:6px">🧹 Fetch a category via shortcut</button>
   </div>
 
   <p class="pane__title">Checked items</p>
@@ -580,7 +562,7 @@ input,select,textarea{font-family:inherit;font-size:16px}
   <div class="flaglist is-on" data-f="go" id="flags-go"></div>
   <div class="flaglist" data-f="hold" id="flags-hold"></div>
   <div class="flaglist" data-f="stop" id="flags-stop"></div>
-  <p class="scan__hint" style="text-align:center;margin-top:16px">Penny Run · build v40</p>
+  <p class="scan__hint" style="text-align:center;margin-top:16px">Penny Run · build v41</p>
 </section>
 
 <!-- ============ ASSESSMENT SHEET ============ -->
@@ -661,7 +643,6 @@ input,select,textarea{font-family:inherit;font-size:16px}
 <nav class="tabs">
   <button class="tab is-on" data-pane="scan"><span class="tab__g">▚</span>Scan</button>
   <button class="tab" data-pane="checked"><span class="tab__g">⚑</span>Checked</button>
-  <button class="tab" data-pane="stores"><span class="tab__g">⌖</span>Stores</button>
   <button class="tab" data-pane="steps"><span class="tab__g">✓</span>Steps</button>
   <button class="tab" data-pane="flags"><span class="tab__g">▤</span>Rules</button>
 </nav>
@@ -734,7 +715,9 @@ var CLUES = [
 
 var ENDING_SCORE = { "":0, "06":1, "03":1, "02":2, "01":0, "penny":4 };
 
-var state = { items: [], steps: [], myStore: null, shortcutName: "", mode: "assess", verifyId: null };
+var state = { items: [], steps: [], myStore: null, shortcutName: "",
+              foundStores: [], pickedStores: [], storeHits: null,
+              mode: "assess", verifyId: null };
 
 function load(){
   try{
@@ -745,6 +728,9 @@ function load(){
       state.steps = Array.isArray(p.steps) ? p.steps : [];
       state.myStore = (p.myStore && p.myStore.num) ? p.myStore : null;
       state.shortcutName = p.shortcutName || "";
+      state.foundStores = Array.isArray(p.foundStores) ? p.foundStores : [];
+      state.pickedStores = Array.isArray(p.pickedStores) ? p.pickedStores : [];
+      state.storeHits = p.storeHits || null;
       return;
     }
   }catch(e){ /* first run or storage blocked */ }
@@ -753,19 +739,12 @@ function load(){
   state.myStore = null;
 }
 function save(){
-  try{ localStorage.setItem(KEY, JSON.stringify({items:state.items, steps:state.steps, myStore:state.myStore, shortcutName:state.shortcutName})); }
+  try{ localStorage.setItem(KEY, JSON.stringify({items:state.items, steps:state.steps,
+       myStore:state.myStore, shortcutName:state.shortcutName,
+       foundStores:state.foundStores, pickedStores:state.pickedStores, storeHits:state.storeHits})); }
   catch(e){ /* private mode — app still works for this session */ }
 }
 
-function renderMyStore(){
-  var s = state.myStore;
-  $("f-storenum").value = s ? s.num : "";
-  $("f-storename").value = s ? (s.name || "") : "";
-  $("mystoreSum").textContent = s
-    ? "Set: #" + s.num + (s.name ? " · " + s.name : "") + " — used to label this trip's finds."
-    : "Your store # is in the HD app (Me → My Store) and printed on every receipt.";
-  $("mystoreTools").hidden = !s;
-}
 
 /* ============================================================
    HELPERS
@@ -1553,11 +1532,15 @@ function renderSweep(){
     return;
   }
   if(sweepSource === "catalog"){
-    $("sweepsum").textContent = list.length + " products carrying the in-store clearance tag" +
-      (CATALOG && CATALOG.store ? " at store #" + CATALOG.store : "") +
-      (CATALOG && CATALOG.pool ? ", from " + CATALOG.pool + " swept" : "") +
-      (CATALOG && CATALOG.harvested ? " on " + CATALOG.harvested : "") +
-      ". Deepest markdown first — the register still has the final word.";
+    var sh = state.storeHits;
+    $("sweepsum").textContent = sh
+      ? list.length + " on clearance at " + sh.stores + " — " + sh.scanned +
+        " checks, " + timeAgo(sh.at) + ". Deepest markdown first."
+      : list.length + " products carrying the in-store clearance tag" +
+        (CATALOG && CATALOG.store ? " at store #" + CATALOG.store : "") +
+        (CATALOG && CATALOG.pool_n ? ", from " + CATALOG.pool_n + " swept" : "") +
+        (CATALOG && CATALOG.harvested ? " on " + CATALOG.harvested : "") +
+        ". Pick your stores above and Scan to check them live.";
   } else {
     var flagged = list.filter(function(c){ return c.clear || c.oos; }).length;
     $("sweepsum").textContent = flagged
@@ -1577,7 +1560,8 @@ function renderSweep(){
     html +=   '<div style="flex:1;min-width:0"><b>' + esc(c.name.slice(0, 60)) + '</b>';
     if(c.price != null){
       html +=   '<span class="storeitem__addr"><span class="storeitem__price">$' + c.price.toFixed(2) +
-                '</span> <span class="storeitem__was">was $' + (c.was || 0).toFixed(2) + '</span></span></div>';
+                '</span> <span class="storeitem__was">was $' + (c.was || 0).toFixed(2) +
+                (c.store ? " · " + esc(storeName(c.store)) : "") + '</span></span></div>';
       html +=   '<span class="storeitem__off">-' + c.pct + '%</span>';
     } else {
       var badge = c.clear ? "🏷️" : c.oos ? "🚫" : "·";
@@ -1619,16 +1603,86 @@ function loadCatalog(){
    tile so the whole sweep reads as a single walking list. */
 function showCatalog(){
   loadCatalog().then(function(d){
-    sweepList = (d.hits || []).map(function(r){
+    var src = (state.storeHits && state.storeHits.hits) ? state.storeHits.hits : (d.hits || []);
+    sweepList = src.map(function(r){
       return { name: r[0], id: r[1], url: "https://www.homedepot.com/p/" + r[1],
                clear: true, oos: false, cat: r[2],
-               price: r[3], was: r[4], pct: r[5] };
+               price: r[3], was: r[4], pct: r[5], store: r[6] || null };
     });
     sweepSource = "catalog";
     renderSweep();
     go("checked");
   }).catch(function(){
     $("sweepsum").textContent = "Catalog didn't load — open the app online once and it caches for good.";
+  });
+}
+
+/* ============================================================
+   LIVE STORE SCAN — run the bundled candidate pool against every
+   selected store through Home Depot's API. Slow but honest: each
+   hit is that store's real clearance price, not a guess.
+   ============================================================ */
+var scanAbort = false;
+
+function storeName(id){
+  var s = (state.foundStores || []).filter(function(x){ return x.storeId === id; })[0];
+  return s ? s.storeName : "#" + id;
+}
+
+function scanStores(){
+  var stores = (state.pickedStores || []).slice();
+  if(!stores.length) return;
+  loadCatalog().then(function(d){
+    var pool = d.pool || (d.hits || []).map(function(h){ return [h[0], h[1], h[2]]; });
+    if(!pool.length){ $("sweepsum").textContent = "No candidate pool bundled to scan."; return; }
+    scanAbort = false;
+    $("scanstores").textContent = "■ Stop";
+    var hits = [], i = 0, si = 0, done = 0;
+    var total = pool.length * stores.length;
+
+    function next(){
+      if(scanAbort || si >= stores.length){ finish(); return; }
+      var item = pool[i], store = stores[si];
+      hdClearance(item[1], store).then(function(p){
+        var pr = p && p.pricing;
+        var cl = pr && pr.clearance;
+        if(cl && cl.value != null){
+          var label = ((p.identifiers || {}).productLabel) || item[0];
+          hits.push([String(label).slice(0, 78), item[1], item[2],
+                     Math.round(cl.value * 100) / 100,
+                     Math.round((pr.value || 0) * 100) / 100,
+                     Math.round(cl.percentageOff || 0), store]);
+          hits.sort(function(a, b){ return b[5] - a[5]; });
+        }
+      }).catch(function(){}).then(function(){
+        done++;
+        if(done % 5 === 0 || hits.length){
+          $("sweepsum").textContent = "Scanning " + done + " of " + total + " — " +
+            hits.length + " on clearance so far. Tap Stop any time to keep what's found.";
+        }
+        i++;
+        if(i >= pool.length){ i = 0; si++; }
+        setTimeout(next, 60);
+      });
+    }
+
+    function finish(){
+      state.storeHits = { hits: hits, at: Date.now(),
+                          stores: stores.map(storeName).join(", "), scanned: done };
+      save();
+      $("scanstores").textContent = "🔎 Scan stores";
+      sweepList = hits.map(function(r){
+        return { name: r[0], id: r[1], url: "https://www.homedepot.com/p/" + r[1],
+                 clear: true, oos: false, cat: r[2],
+                 price: r[3], was: r[4], pct: r[5], store: r[6] };
+      });
+      sweepSource = "catalog";
+      renderSweep();
+    }
+
+    $("sweepsum").textContent = "Scanning " + pool.length + " products across " +
+      stores.length + " store" + (stores.length === 1 ? "" : "s") + "…";
+    next();
   });
 }
 
@@ -2119,6 +2173,72 @@ function delSheet(){
 }
 
 /* ============================================================
+   HOME DEPOT API — their gateway sends
+   access-control-allow-origin: *, so the browser can query it
+   directly for store lists and per-store clearance pricing.
+   ============================================================ */
+var HD_API = "https://apionline.homedepot.com/federation-gateway/graphql";
+
+function hdQuery(query, variables){
+  return fetch(HD_API, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-experience-name": "general-merchandise" },
+    body: JSON.stringify({ operationName: "q", variables: variables || {}, query: query })
+  }).then(function(r){ return r.json(); }).then(function(j){ return (j && j.data) || null; });
+}
+
+function hdStores(zip){
+  return hdQuery('query q($z: String!) { storeSearch(zipCode: $z) ' +
+    '{ storeId storeName address { street city state postalCode } } }', { z: zip })
+    .then(function(d){ return (d && d.storeSearch) || []; });
+}
+
+function hdClearance(itemId, storeId){
+  return hdQuery('query q($i: String!) { product(itemId: $i) { itemId ' +
+    'identifiers { productLabel } pricing(storeId: "' + storeId + '", ' +
+    'isBrandPricingPolicyCompliant: false) { value clearance { value percentageOff } } } }',
+    { i: itemId }).then(function(d){ return (d && d.product) || null; });
+}
+
+/* ============================================================
+   MY STORES — picked from Home Depot's own list, so store
+   numbers are real and never typed by hand.
+   ============================================================ */
+function renderStorePick(){
+  var found = state.foundStores || [];
+  var picked = state.pickedStores || [];
+  $("storesum").textContent = picked.length
+    ? picked.length + " store" + (picked.length === 1 ? "" : "s") + " selected — Scan stores checks the sweep pool at each."
+    : (found.length ? "Tap the stores you'd drive to." : "Enter your ZIP (or tap ⌖) to list nearby stores.");
+  var html = "";
+  found.forEach(function(s){
+    var on = picked.indexOf(s.storeId) !== -1;
+    html += '<button class="storeitem" data-store="' + esc(s.storeId) + '" style="width:100%;text-align:left' +
+            (on ? ";border-color:var(--go);background:var(--go-bg)" : "") + '">';
+    html +=   '<span class="cattile" style="background:' + (on ? "var(--go)" : "var(--ink)") + '">#' + esc(s.storeId) + '</span>';
+    html +=   '<div style="flex:1;min-width:0"><b>' + esc(s.storeName) + '</b>';
+    html +=     '<span class="storeitem__addr">' + esc((s.address && s.address.street) || "") + '</span></div>';
+    html +=   '<span class="storeitem__d">' + (on ? "✓" : "+") + '</span>';
+    html += '</button>';
+  });
+  $("storepick").innerHTML = html;
+  $("scanstores").hidden = !picked.length;
+}
+
+function lookupStores(zip){
+  $("storesum").textContent = "Asking Home Depot for stores near " + zip + "…";
+  hdStores(zip).then(function(list){
+    state.foundStores = list.map(function(s){
+      return { storeId: s.storeId, storeName: s.storeName, address: s.address };
+    });
+    save(); renderStorePick();
+    if(!list.length) $("storesum").textContent = "No stores came back for that ZIP.";
+  }).catch(function(){
+    $("storesum").textContent = "Couldn't reach Home Depot just now — try again with signal.";
+  });
+}
+
+/* ============================================================
    STORE LOCATOR — bundled OpenStreetMap directory + GPS.
    ============================================================ */
 var STORES = null;
@@ -2136,54 +2256,13 @@ function distMi(a1, o1, a2, o2){
   return 2 * R * Math.asin(Math.sqrt(h));
 }
 
-function storeMsg(m){
-  $("storelist").innerHTML = '<div class="empty">' + esc(m) + '</div>';
-  $("locbtn").disabled = false;
-  $("locbtn").textContent = "⌖ Find stores near me";
-}
 
-function locate(){
-  $("locbtn").disabled = true;
-  $("locbtn").textContent = "Finding you…";
-  if(!navigator.geolocation) return storeMsg("This browser won't share a location.");
-  navigator.geolocation.getCurrentPosition(function(pos){
-    loadStores().then(function(st){
-      var la = pos.coords.latitude, lo = pos.coords.longitude;
-      var near = st.map(function(s){ return { d: distMi(la, lo, s[0], s[1]), s: s }; })
-        .sort(function(a, b){ return a.d - b.d; }).slice(0, 8);
-      var ios = /iPad|iPhone|iPod/.test(navigator.userAgent);
-      var html = "";
-      near.forEach(function(n){
-        var s = n.s;
-        var maps = ios
-          ? "https://maps.apple.com/?daddr=" + s[0] + "," + s[1]
-          : "https://www.google.com/maps/dir/?api=1&destination=" + s[0] + "," + s[1];
-        html += '<div class="storeitem">';
-        html +=   '<div style="flex:1;min-width:0"><b>' + esc(s[2]) + '</b>';
-        if(s[3]) html += '<span class="storeitem__addr">' + esc(s[3]) + '</span>';
-        html +=   '</div>';
-        html +=   '<span class="storeitem__d">' + n.d.toFixed(1) + ' mi</span>';
-        html +=   '<a class="btn btn--sm btn--ghost" href="' + esc(maps) + '" target="_blank" rel="noopener">Go ↗</a>';
-        html += '</div>';
-      });
-      $("storelist").innerHTML = html;
-      $("locbtn").disabled = false;
-      $("locbtn").textContent = "⌖ Refresh";
-    }).catch(function(){
-      storeMsg("Store list didn't load — open the app online once and it caches for good.");
-    });
-  }, function(err){
-    storeMsg(err && err.code === 1
-      ? "Location permission denied — allow it for this site in your browser settings."
-      : "Couldn't get a GPS fix. Try again with a clearer view of the sky.");
-  }, { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 });
-}
 
 /* ============================================================
    NAV
    ============================================================ */
 function go(pane){
-  ["scan","checked","stores","steps","flags"].forEach(function(p){
+  ["scan","checked","steps","flags"].forEach(function(p){
     $("pane-" + p).classList.toggle("is-on", p === pane);
   });
   Array.prototype.forEach.call(document.querySelectorAll(".tab"), function(b){
@@ -2280,21 +2359,8 @@ $("f-nowp").addEventListener("input", updateLive);
 $("f-wasp").addEventListener("input", updateLive);
 $("f-tagd").addEventListener("input", updateLive);
 
-$("locbtn").addEventListener("click", locate);
 
-$("storeSave").addEventListener("click", function(){
-  var num = digitsOnly($("f-storenum").value);
-  if(!num || num.length < 3 || num.length > 5){ $("f-storenum").focus(); return; }
-  state.myStore = { num: num, name: $("f-storename").value.trim() };
-  save(); renderMyStore();
-});
 
-$("browseSavings").addEventListener("click", function(){
-  window.open("https://www.homedepot.com/c/Savings_Center", "_blank", "noopener");
-});
-$("browseClear").addEventListener("click", function(){
-  window.open("https://www.homedepot.com/s/clearance", "_blank", "noopener");
-});
 
 $("sweeplist").addEventListener("click", function(e){
   var b = e.target.closest("[data-sweep]");
@@ -2304,6 +2370,51 @@ $("sweeplist").addEventListener("click", function(e){
 });
 $("sweepclear").addEventListener("click", function(){
   sweepList = []; renderSweep();
+});
+
+$("zipgo").addEventListener("click", function(){
+  var z = digitsOnly($("f-zip").value).slice(0, 5);
+  if(z.length !== 5){ $("f-zip").focus(); return; }
+  lookupStores(z);
+});
+$("f-zip").addEventListener("keydown", function(e){
+  if(e.key === "Enter"){ e.preventDefault(); $("zipgo").click(); }
+});
+
+/* GPS can't name a ZIP on its own, so find the nearest bundled
+   store and borrow its postcode to ask Home Depot. */
+$("zipgps").addEventListener("click", function(){
+  if(!navigator.geolocation){ $("storesum").textContent = "This browser won't share a location."; return; }
+  $("storesum").textContent = "Finding you…";
+  navigator.geolocation.getCurrentPosition(function(pos){
+    loadStores().then(function(st){
+      var la = pos.coords.latitude, lo = pos.coords.longitude, best = null, bd = 1e9;
+      st.forEach(function(s){
+        if(!s[4]) return;
+        var d = distMi(la, lo, s[0], s[1]);
+        if(d < bd){ bd = d; best = s; }
+      });
+      if(!best){ $("storesum").textContent = "No ZIP nearby — type yours instead."; return; }
+      $("f-zip").value = best[4];
+      lookupStores(best[4]);
+    }).catch(function(){ $("storesum").textContent = "Store data didn't load."; });
+  }, function(){ $("storesum").textContent = "Couldn't get a GPS fix — type your ZIP instead."; },
+     { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 });
+});
+
+$("storepick").addEventListener("click", function(e){
+  var b = e.target.closest("[data-store]");
+  if(!b) return;
+  var id = b.getAttribute("data-store");
+  state.pickedStores = state.pickedStores || [];
+  var at = state.pickedStores.indexOf(id);
+  if(at === -1) state.pickedStores.push(id); else state.pickedStores.splice(at, 1);
+  save(); renderStorePick();
+});
+
+$("scanstores").addEventListener("click", function(){
+  if(this.textContent.indexOf("Stop") !== -1){ scanAbort = true; return; }
+  scanStores();
 });
 
 $("catbtn").addEventListener("click", function(){
@@ -2417,7 +2528,6 @@ load();
 renderItems();
 renderSteps();
 renderFlags();
-renderMyStore();
 renderSweep();
 setMode("assess", null);
 
