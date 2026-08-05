@@ -462,8 +462,8 @@ input,select,textarea{font-family:inherit;font-size:16px}
       <li>Add action <b>URL Encode</b> (acting on the URLs) — this keeps the link intact in the hand-off.</li>
       <li>Add action <b>Get Contents of URL</b> (acting on the URLs).</li>
       <li>Add action <b>Get Text from Input</b> (from the Contents).</li>
-      <li>Add action <b>Match Text</b> (on that Text) and paste this pattern:
-        <div class="copyrow"><code id="rx-pat">(&lt;title&gt;[^&lt;]{5,160})|("price"\s*:\s*"?\d+(\.\d+)?)|("clearance"\s*:\s*\{)|(OUT_OF_STOCK|LIMITED_STOCK|BACKORDERED)|(\$\s*\d+\.\d{2})|([Cc]learance\s+[Ii]tem)|([Ww]as\s+\$\d+\.\d{2})|(\(\d{1,3}%\))</code>
+      <li>Add action <b>Match Text</b> (on that Text) and paste this pattern (it also harvests product links, so sharing a <i>category</i> page fills the Sweep list):
+        <div class="copyrow"><code id="rx-pat">(/p/[A-Za-z0-9][\w%-]{6,90}/\d{6,})|(&lt;title&gt;[^&lt;]{5,160})|("price"\s*:\s*"?\d+(\.\d+)?)|("clearance"\s*:\s*\{)|(OUT_OF_STOCK|LIMITED_STOCK|BACKORDERED)|(\$\s*\d+\.\d{2})|([Cc]learance\s+[Ii]tem)|([Ww]as\s+\$\d+\.\d{2})|(\(\d{1,3}%\))</code>
         <button class="btn btn--sm btn--ghost" data-copy="rx-pat">Copy</button></div></li>
       <li>Add action <b>Combine Text</b> (combine Matches, separator: New Lines).</li>
       <li>Add action <b>URL Encode</b> (on the Combined Text).</li>
@@ -504,12 +504,19 @@ input,select,textarea{font-family:inherit;font-size:16px}
       <button class="btn btn--ghost" id="browseSavings" style="flex:1">Savings Center ↗</button>
       <button class="btn btn--ghost" id="browseClear" style="flex:1">Clearance search ↗</button>
     </div>
-    <p class="scan__hint" style="margin-top:6px">Open these in the HD app with your store set, browse for the clearance badge, and share anything promising straight back to Penny Run.</p>
+    <p class="scan__hint" style="margin-top:6px">Open these in the HD app with your store set, browse a category, then <b>share the results page itself</b> to Penny Run — it harvests every product into a Sweep candidate list on the Checked tab, flagging clearance and online-unavailable signals. Tap a keeper to open it, then share it back for the full verdict.</p>
   </div>
 </section>
 
 <!-- ============ CHECKED ============ -->
 <section class="pane" id="pane-checked">
+  <div id="sweepwrap" hidden style="margin-bottom:16px">
+    <p class="pane__title">Sweep candidates</p>
+    <p class="scan__hint" id="sweepsum" style="margin:0 0 8px"></p>
+    <div id="sweeplist"></div>
+    <button class="btn btn--ghost btn--wide btn--sm" id="sweepclear" style="margin-top:2px">Clear candidates</button>
+  </div>
+
   <p class="pane__title">Checked items</p>
   <p class="scan__hint" style="margin:0 0 8px">Your trip log. Filter by flag — greens are your buy list, reds are already ruled out.</p>
   <div class="seg" id="fchips" style="margin-bottom:10px">
@@ -551,7 +558,7 @@ input,select,textarea{font-family:inherit;font-size:16px}
   <div class="flaglist is-on" data-f="go" id="flags-go"></div>
   <div class="flaglist" data-f="hold" id="flags-hold"></div>
   <div class="flaglist" data-f="stop" id="flags-stop"></div>
-  <p class="scan__hint" style="text-align:center;margin-top:16px">Penny Run · build v26</p>
+  <p class="scan__hint" style="text-align:center;margin-top:16px">Penny Run · build v27</p>
 </section>
 
 <!-- ============ ASSESSMENT SHEET ============ -->
@@ -1403,7 +1410,58 @@ function readShotFile(file){
   img.src = url;
 }
 
+/* ============================================================
+   SWEEP — a store-localized search/category page lists ~28
+   products; harvest every one into a candidate queue, flagging
+   inline clearance and online-unavailable signals. One share
+   becomes a whole aisle's worth of leads.
+   ============================================================ */
+function parseSweep(text){
+  var t = String(text || "");
+  var seen = {}, out = [];
+  var re = /\/p\/([A-Za-z0-9][A-Za-z0-9%-]{6,90})\/(\d{6,})/g, m;
+  while((m = re.exec(t))){
+    var id = m[2];
+    if(seen[id]) continue;
+    seen[id] = 1;
+    var name = decodeURIComponent(m[1]).replace(/-/g, " ").replace(/\s+/g, " ").trim();
+    /* nearest signals in the surrounding slice of the blob */
+    var win = t.slice(Math.max(0, m.index - 1400), m.index + 1400);
+    var clear = /"clearance":\{/.test(win) || /clearance/i.test(win);
+    var oos = /"type":"delivery"[^}]*"fulfillable":false|OUT_OF_STOCK|deliveryAvailable"?:\s*false/i.test(win);
+    out.push({ name: name, url: "https://www.homedepot.com/p/" + m[1] + "/" + id, id: id, clear: clear, oos: oos });
+    if(out.length >= 60) break;
+  }
+  return out;
+}
+
+var sweepList = [];
+
+function showSweep(list){
+  sweepList = list;
+  go("checked");
+  var el = $("sweepwrap");
+  el.hidden = false;
+  var flagged = list.filter(function(c){ return c.clear || c.oos; }).length;
+  $("sweepsum").textContent = list.length + " products found" +
+    (flagged ? " · " + flagged + " show a clearance or online-unavailable signal" : "") + ". Tap to open at your store, then share the keepers back.";
+  var html = "";
+  list.forEach(function(c, i){
+    var badge = c.clear ? "🏷️" : c.oos ? "🚫" : "·";
+    html += '<button class="storeitem" data-sweep="' + i + '" style="width:100%;text-align:left">';
+    html +=   '<div style="flex:1;min-width:0"><b>' + esc(c.name.slice(0, 60)) + '</b>';
+    html +=     '<span class="storeitem__addr">' + (c.clear ? "clearance signal · " : c.oos ? "online-unavailable · " : "") + "#" + esc(c.id) + '</span></div>';
+    html +=   '<span class="storeitem__d">' + badge + " ↗</span>";
+    html += '</button>';
+  });
+  $("sweeplist").innerHTML = html;
+}
+
 function handleHDShare(text){
+  /* a page with many product links is a sweep, not one item */
+  var sweep = parseSweep(text);
+  if(sweep.length >= 4){ showSweep(sweep); return; }
+
   var p = parseHDShare(text);
   var read = applyAppShot(parseAppShot(text)); /* shortcut-fetched data rides in the same text */
   var bits = [];
@@ -1964,6 +2022,16 @@ $("browseSavings").addEventListener("click", function(){
 });
 $("browseClear").addEventListener("click", function(){
   window.open("https://www.homedepot.com/s/clearance", "_blank", "noopener");
+});
+
+$("sweeplist").addEventListener("click", function(e){
+  var b = e.target.closest("[data-sweep]");
+  if(!b) return;
+  var c = sweepList[parseInt(b.getAttribute("data-sweep"), 10)];
+  if(c) window.open(c.url, "_blank", "noopener");
+});
+$("sweepclear").addEventListener("click", function(){
+  sweepList = []; $("sweepwrap").hidden = true; $("sweeplist").innerHTML = "";
 });
 
 Array.prototype.forEach.call(document.querySelectorAll("[data-copy]"), function(b){
