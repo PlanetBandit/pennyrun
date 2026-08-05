@@ -334,6 +334,10 @@ input,select,textarea{font-family:inherit;font-size:16px}
 .storeitem__was{font-size:11.5px;color:var(--mute);font-weight:400}
 .qtyok{color:var(--go);font-weight:700}
 .qtyno{color:var(--stop);font-weight:700}
+.fell{
+  display:inline-block;margin-top:3px;font-size:10.5px;font-weight:800;
+  letter-spacing:.03em;background:var(--go);color:#fff;border-radius:4px;padding:1px 5px;
+}
 .storeitem__off{
   font-family:var(--mono);font-size:11px;font-weight:800;white-space:nowrap;
   background:var(--stop);color:#fff;border-radius:5px;padding:2px 5px;
@@ -571,7 +575,7 @@ input,select,textarea{font-family:inherit;font-size:16px}
   <div class="flaglist is-on" data-f="go" id="flags-go"></div>
   <div class="flaglist" data-f="hold" id="flags-hold"></div>
   <div class="flaglist" data-f="stop" id="flags-stop"></div>
-  <p class="scan__hint" style="text-align:center;margin-top:16px">Penny Run · build v53</p>
+  <p class="scan__hint" style="text-align:center;margin-top:16px">Penny Run · build v54</p>
 </section>
 
 <!-- ============ ASSESSMENT SHEET ============ -->
@@ -1158,7 +1162,7 @@ function buildCatIndex(d){
       store: r[6], qty: (r[7] == null ? null : r[7]),
       url: "https://www.homedepot.com" + (r[9] || "/p/" + r[1]),
       upc: u, sku: r[11] || "", model: r[12] || "",
-      oos: !!r[8], sup: !!r[13]
+      oos: !!r[8], sup: !!r[13], drop: (r[14] == null ? null : r[14])
     });
   });
   return CATUPC;
@@ -1177,6 +1181,8 @@ function catalogRows(code){
     if(ap !== bp) return ap - bp;
     var az = a.qty === 0 ? 1 : 0, bz = b.qty === 0 ? 1 : 0;
     if(az !== bz) return az - bz;
+    var ad = a.drop != null ? 0 : 1, bd = b.drop != null ? 0 : 1;
+    if(ad !== bd) return ad - bd;
     return b.pct - a.pct;
   });
   return rows;
@@ -1193,6 +1199,9 @@ function sweepSummary(rows){
   if(cheaper){
     s += " Cheaper at " + storeName(cheaper.store) + " $" + cheaper.price.toFixed(2) +
          " (-" + cheaper.pct + "%).";
+  }
+  if(b.drop != null){
+    s += " It fell from $" + b.drop.toFixed(2) + " overnight, so the cascade is still running.";
   }
   if(b.oos) s += " Store only — it can't be ordered.";
   if(b.sup) s += " Home Depot lists a replacement SKU, so it's being phased out.";
@@ -1605,12 +1614,20 @@ var sweepList = [];
 var sweepSource = "sweep";
 
 /* department names trimmed so the tile never breaks mid-word */
+/* Departments come from two places now: the hand-written harvest list and
+   Home Depot's own top-level breadcrumb, so both spellings map here. */
 var CAT_SHORT = {
   "Appliances":"APPLNC", "Building":"BUILD", "Electrical":"ELEC", "Furniture":"FURN",
   "Flooring":"FLOOR", "Hardware":"HARDW", "Lighting":"LIGHT", "Plumbing":"PLUMB",
-  "Smart Home":"SMART", "Fans & AC":"FAN/AC", "Cleaning":"CLEAN", "Ladders":"LADDER"
+  "Smart Home":"SMART", "Fans & AC":"FAN/AC", "Cleaning":"CLEAN", "Ladders":"LADDER",
+  "Building Materials":"BUILD", "Tools & Workwear":"TOOLS", "Home Decor":"DECOR",
+  "Kitchen & Kitchenware":"KITCHN", "Bath & Faucets":"BATH", "Outdoors":"OUTDOOR",
+  "Lawn & Garden":"GARDEN", "Heating & Cooling":"HVAC", "Doors & Windows":"DOORS",
+  "Storage & Organization":"STORAGE", "Lighting & Ceiling Fans":"LIGHT",
+  "Electrical & Smart Home":"ELEC", "Paint & Paint Supplies":"PAINT",
+  "Decor & Furniture":"DECOR", "Hardware & Fasteners":"HARDW"
 };
-function shortCat(c){ return CAT_SHORT[c] || c; }
+function shortCat(c){ return CAT_SHORT[c] || (c || "").slice(0, 7); }
 
 function renderSweep(){
   var list = sweepList;
@@ -1626,12 +1643,18 @@ function renderSweep(){
   }
   if(sweepSource === "catalog"){
     var picked = (state.pickedStores || []).length;
+    var fell = list.filter(function(c){ return c.drop != null; }).length;
+    /* the file ships only the deepest few thousand rows — say so rather
+       than let the count read as the whole picture */
+    var total = CATALOG && CATALOG.total_hits;
+    var more = (total && CATALOG.hits && total > CATALOG.hits.length)
+      ? " · best " + CATALOG.hits.length + " of " + total + " found, spread across every aisle" : "";
     $("sweepsum").textContent = list.length + " on in-store clearance" +
       (picked ? " at your " + picked + " selected store" + (picked === 1 ? "" : "s") : " across " +
         ((CATALOG && CATALOG.stores_n) || "all") + " nearby stores") +
-      (CATALOG && CATALOG.pool_n ? " · " + CATALOG.pool_n + " products swept" : "") +
+      (CATALOG && CATALOG.pool_n ? " · " + CATALOG.pool_n + " products swept" : "") + more +
       (CATALOG && CATALOG.harvested ? " " + CATALOG.harvested : "") +
-      ". Deepest markdown first; empty shelves last.";
+      (fell ? ". " + fell + " dropped overnight — those lead." : ". Deepest markdown first; empty shelves last.");
   } else {
     var flagged = list.filter(function(c){ return c.clear || c.oos; }).length;
     $("sweepsum").textContent = flagged
@@ -1666,6 +1689,10 @@ function renderSweep(){
                 '</span> <span class="storeitem__was">was $' + (c.was || 0).toFixed(2) +
                 (c.oos ? " · store only" : "") +
                 (c.sup ? " · being replaced" : "") + '</span>' + qh;
+      /* still falling — the cascade is what ends at a penny */
+      if(c.drop != null){
+        html += '<span class="fell">↓ $' + c.drop.toFixed(2) + ' → $' + c.price.toFixed(2) + ' overnight</span>';
+      }
       /* the clearance price is that store's only — say which, loudly */
       if(c.store) html += '<span class="atstore">@ ' + esc(storeName(c.store)) + '</span>';
       var ids = [];
@@ -1726,13 +1753,18 @@ function showCatalog(){
                clear: true, oos: !!r[8], cat: r[2],
                price: r[3], was: r[4], pct: r[5], store: r[6] || null,
                qty: (r[7] == null ? null : r[7]), upc: r[10] || "",
-               sku: r[11] || "", model: r[12] || "", sup: !!r[13] };
+               sku: r[11] || "", model: r[12] || "", sup: !!r[13],
+               drop: (r[14] == null ? null : r[14]) };
     });
-    /* deepest markdown first, but a shelf the store says is empty is a
-       wasted walk — those sink to the bottom rather than disappear */
+    /* A price that fell last night is a markdown still in motion, and that
+       beats a deeper cut that has sat still for a week. Empty shelves sink
+       to the bottom either way — a wasted walk is a wasted walk. */
     sweepList.sort(function(a, b){
       var az = a.qty === 0 ? 1 : 0, bz = b.qty === 0 ? 1 : 0;
-      return az !== bz ? az - bz : b.pct - a.pct;
+      if(az !== bz) return az - bz;
+      var ad = a.drop != null ? 0 : 1, bd = b.drop != null ? 0 : 1;
+      if(ad !== bd) return ad - bd;
+      return b.pct - a.pct;
     });
     sweepSource = "catalog";
     renderSweep();
