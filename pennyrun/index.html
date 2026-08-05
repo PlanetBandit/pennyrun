@@ -567,7 +567,7 @@ input,select,textarea{font-family:inherit;font-size:16px}
   <div class="flaglist is-on" data-f="go" id="flags-go"></div>
   <div class="flaglist" data-f="hold" id="flags-hold"></div>
   <div class="flaglist" data-f="stop" id="flags-stop"></div>
-  <p class="scan__hint" style="text-align:center;margin-top:16px">Penny Run · build v34</p>
+  <p class="scan__hint" style="text-align:center;margin-top:16px">Penny Run · build v35</p>
 </section>
 
 <!-- ============ ASSESSMENT SHEET ============ -->
@@ -1535,24 +1535,36 @@ function sweepWasPending(){
   return t && (Date.now() - t) < 600000;
 }
 
+/* Category searches return a real product grid; Home Depot's
+   generic clearance and Savings Center pages are landing pages
+   that carry only a handful of promo tiles, so they are offered
+   for browsing but never as a fetch target. */
+var EVERGREEN_HUNT = [
+  ["Tools", "tools clearance"], ["Lighting", "lighting clearance"],
+  ["Storage", "storage clearance"], ["Appliances", "appliances clearance"]
+];
+
 function renderSweepPicker(){
   var m = new Date().getMonth();
-  var picks = SEASON_HUNT[m].slice();
+  var picks = SEASON_HUNT[m].concat(EVERGREEN_HUNT);
   var html = '<div class="seg" style="margin:8px 0 7px">';
   html += '<button class="seg__b' + (sweepMode === "fetch" ? " is-on" : "") + '" data-smode="fetch">⚡ Fetch here</button>';
   html += '<button class="seg__b' + (sweepMode === "browse" ? " is-on" : "") + '" data-smode="browse">🏬 Browse in HD</button>';
   html += '</div>';
   html += '<p class="scan__hint" style="margin:0 0 6px">' + (sweepMode === "fetch"
-    ? "Tap a category — your shortcut fetches it and the candidates land in this list."
+    ? "Tap a category — your shortcut fetches it and the candidates land in this list. Specific categories work; Home Depot's generic clearance page has no product grid to harvest."
     : "Opens at your store in the HD app; share the results page back here.") + '</p>';
-  html += '<div class="seg" style="margin-bottom:6px">';
+  html += '<div class="seg" style="margin-bottom:6px;flex-wrap:wrap">';
   picks.forEach(function(p){
     html += '<button class="seg__b" data-hunt="' + esc(p[1]) + '">' + esc(p[0]) + '</button>';
   });
-  html += '</div><div class="seg" style="margin-bottom:6px">';
-  html += '<button class="seg__b" data-hunt="__savings">Savings Center</button>';
-  html += '<button class="seg__b" data-hunt="clearance">All clearance</button>';
   html += '</div>';
+  if(sweepMode === "browse"){
+    html += '<div class="seg" style="margin-bottom:6px">';
+    html += '<button class="seg__b" data-hunt="__savings">Savings Center</button>';
+    html += '<button class="seg__b" data-hunt="clearance">All clearance</button>';
+    html += '</div>';
+  }
   html += '<div class="field" style="margin:0"><label class="field__l" for="f-scname">Shortcut name (must match exactly)</label>' +
           '<input class="field__i" id="f-scname" placeholder="Send To Penny Run"></div>';
   $("sweeppick").innerHTML = html;
