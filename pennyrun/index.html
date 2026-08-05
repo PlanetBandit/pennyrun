@@ -477,7 +477,7 @@ input,select,textarea{font-family:inherit;font-size:16px}
       <li>Add action <b>Open URLs</b> (on that Text). Done — in the HD app tap Share → <b>Send to Penny Run</b>.</li>
     </ol>
     <p class="guide__p">Why not a full-page capture? Home Depot's page draws itself with JavaScript after loading, so PDF/screenshot renders only catch the empty shell — the page's raw code is where the data actually lives.</p>
-    <p class="guide__p"><b>Power move:</b> set your store in the Stores tab, then add the Cookie header it gives you to the “Get Contents of URL” action — the shortcut then fetches every page as YOUR store, in-store clearance price included.</p>
+    <p class="guide__p"><b>What it can and can't see:</b> the fetch is anonymous, so it brings back the product name, internet #, online price, and general stock status — but not your store's in-store clearance price. Home Depot ignores a hand-set store cookie (tested: it returns a random store), so that number still comes from <b>📸 From a screenshot</b> of the HD app.</p>
     <p class="guide__p">Once this shortcut exists, <b>Sweep</b> (Checked tab) can call it directly: tap a category and it fetches that clearance page and fills the candidate list without you leaving Penny Run.</p>
   </details>
 </section>
@@ -500,10 +500,10 @@ input,select,textarea{font-family:inherit;font-size:16px}
   </div>
   <button class="btn btn--tag btn--wide" id="storeSave">Save my store</button>
   <div id="mystoreTools" hidden style="margin-top:12px">
-    <p class="field__l">Shortcut upgrade — your store's clearance prices</p>
-    <div class="copyrow"><code id="cookieVal" class="field__i--mono" style="display:block;font-family:var(--mono);font-size:10.5px;background:var(--paper);border:1px dashed var(--line);border-radius:6px;padding:6px 8px;word-break:break-all;flex:1;min-width:0"></code>
-      <button class="btn btn--sm btn--ghost" data-copy="cookieVal">Copy</button></div>
-    <p class="scan__hint" style="margin:4px 0 10px">One-time: in your shortcut, tap the ⟩ on <b>Get Contents of URL</b> → Headers → add key <b>Cookie</b> with this value. Every shared link then fetches as YOUR store — including its in-store clearance price.</p>
+    <div class="warn" style="margin-bottom:10px">
+      <b>Where store-specific clearance actually comes from.</b> Pages the shortcut fetches are anonymous — testing showed Home Depot ignores a hand-set store cookie and returns a random store, so those fetches give you the online price, name, and general availability, but <b>not</b> your store's clearance price. For that number, open the item in the HD app (where your store really is set) and use <b>📸 From a screenshot</b> — that reads the in-store clearance panel directly.
+    </div>
+    <div class="copyrow" hidden><code id="cookieVal"></code></div>
     <p class="field__l">Hunt at my store</p>
     <div style="display:flex;gap:6px">
       <button class="btn btn--ghost" id="browseSavings" style="flex:1">Savings Center ↗</button>
@@ -567,7 +567,7 @@ input,select,textarea{font-family:inherit;font-size:16px}
   <div class="flaglist is-on" data-f="go" id="flags-go"></div>
   <div class="flaglist" data-f="hold" id="flags-hold"></div>
   <div class="flaglist" data-f="stop" id="flags-stop"></div>
-  <p class="scan__hint" style="text-align:center;margin-top:16px">Penny Run · build v32</p>
+  <p class="scan__hint" style="text-align:center;margin-top:16px">Penny Run · build v33</p>
 </section>
 
 <!-- ============ ASSESSMENT SHEET ============ -->
@@ -744,23 +744,14 @@ function save(){
   catch(e){ /* private mode — app still works for this session */ }
 }
 
-/* The localizer cookie steers homedepot.com to a specific store —
-   which is where the in-store clearance data lives. Verified format. */
-function storeCookie(){
-  if(!state.myStore) return "";
-  var nm = encodeURIComponent(state.myStore.name || "Store");
-  return "THD_PERSIST=C4%3D" + state.myStore.num + "%2B" + nm + "%20%2B";
-}
-
 function renderMyStore(){
   var s = state.myStore;
   $("f-storenum").value = s ? s.num : "";
   $("f-storename").value = s ? (s.name || "") : "";
   $("mystoreSum").textContent = s
-    ? "Set: #" + s.num + (s.name ? " · " + s.name : "") + " — tools unlocked below."
+    ? "Set: #" + s.num + (s.name ? " · " + s.name : "") + " — used to label this trip's finds."
     : "Your store # is in the HD app (Me → My Store) and printed on every receipt.";
   $("mystoreTools").hidden = !s;
-  if(s) $("cookieVal").textContent = storeCookie();
 }
 
 /* ============================================================
