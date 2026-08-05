@@ -2,12 +2,13 @@
    Everything the app needs is local, so one pass at install
    makes the whole thing work with zero bars in the store. */
 
-var CACHE = "pennyrun-v36";
+var CACHE = "pennyrun-v37";
 var ASSETS = [
   "./",
   "./index.html",
   "./zxing.min.js",
   "./stores.json",
+  "./clearance.json",
   "./manifest.webmanifest",
   "./icon-192.png",
   "./icon-512.png",

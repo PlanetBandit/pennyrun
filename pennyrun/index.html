@@ -520,8 +520,10 @@ input,select,textarea{font-family:inherit;font-size:16px}
     <p class="scan__hint" id="sweepsum" style="margin:0 0 8px"></p>
     <div id="sweeplist"></div>
     <div id="sweeppick" hidden></div>
+    <div id="catpick" hidden></div>
     <div style="display:flex;gap:6px;margin-top:8px">
-      <button class="btn btn--tag btn--sm" id="sweepstart" style="flex:1">🧹 Sweep a category</button>
+      <button class="btn btn--tag btn--sm" id="catbtn" style="flex:1">📖 Browse clearance</button>
+      <button class="btn btn--ghost btn--sm" id="sweepstart" style="flex:1">🧹 Fetch fresh</button>
       <button class="btn btn--ghost btn--sm" id="sweepclear" hidden>Clear</button>
     </div>
   </div>
@@ -567,7 +569,7 @@ input,select,textarea{font-family:inherit;font-size:16px}
   <div class="flaglist is-on" data-f="go" id="flags-go"></div>
   <div class="flaglist" data-f="hold" id="flags-hold"></div>
   <div class="flaglist" data-f="stop" id="flags-stop"></div>
-  <p class="scan__hint" style="text-align:center;margin-top:16px">Penny Run · build v36</p>
+  <p class="scan__hint" style="text-align:center;margin-top:16px">Penny Run · build v37</p>
 </section>
 
 <!-- ============ ASSESSMENT SHEET ============ -->
@@ -1521,18 +1523,26 @@ function parseSweep(text){
 
 var sweepList = [];
 
+var sweepSource = "sweep";
+
 function renderSweep(){
   var list = sweepList;
   $("sweepclear").hidden = !list.length;
   if(!list.length){
-    $("sweepsum").textContent = "Turn a whole category into a candidate list: open a clearance category at your store, then share that results page back here.";
+    $("sweepsum").textContent = "Browse the bundled clearance catalog, or fetch a live category through your shortcut.";
     $("sweeplist").innerHTML = "";
     return;
   }
-  var flagged = list.filter(function(c){ return c.clear || c.oos; }).length;
-  $("sweepsum").textContent = flagged
-    ? list.length + " found · " + flagged + " carry a clearance or in-store-only signal (badged, listed first). Tap one to open it, then share it back for the full verdict."
-    : list.length + " found, but none carried a clearance signal — these are search results to check, not confirmed clearance. Tap one to open it at your store.";
+  if(sweepSource === "catalog"){
+    $("sweepsum").textContent = list.length + " products from Home Depot clearance searches" +
+      (CATALOG && CATALOG.harvested ? " (catalog built " + CATALOG.harvested + ")" : "") +
+      ". Not confirmed markdowns — tap one to open it and check its real price and clearance panel.";
+  } else {
+    var flagged = list.filter(function(c){ return c.clear || c.oos; }).length;
+    $("sweepsum").textContent = flagged
+      ? list.length + " found · " + flagged + " carry a clearance or in-store-only signal (badged, listed first). Tap one to open it, then share it back for the full verdict."
+      : list.length + " found, but none carried a clearance signal — these are search results to check, not confirmed clearance. Tap one to open it at your store.";
+  }
   /* badged candidates first — they're the ones worth the walk.
      Sort the backing array so row indices stay valid on tap. */
   sweepList.sort(function(a, b){
@@ -1553,9 +1563,55 @@ function renderSweep(){
 
 function showSweep(list){
   sweepList = list;
+  sweepSource = "sweep";
   $("sweeppick").hidden = true;
   renderSweep();
   go("checked");
+}
+
+/* ============================================================
+   BUNDLED CATALOG — products harvested from Home Depot's own
+   clearance searches and shipped with the app, so the list is
+   there instantly with no shortcut and no network. Candidates
+   to check, not confirmed markdowns.
+   ============================================================ */
+var CATALOG = null, catFilter = "";
+
+function loadCatalog(){
+  if(CATALOG) return Promise.resolve(CATALOG);
+  return fetch("clearance.json").then(function(r){ return r.json(); })
+    .then(function(d){ CATALOG = d; return d; });
+}
+
+function showCatalog(){
+  loadCatalog().then(function(d){
+    var rows = d.items.filter(function(r){ return !catFilter || r[2] === catFilter; });
+    sweepList = rows.map(function(r){
+      return { name: r[0], id: r[1], url: "https://www.homedepot.com/p/" + r[1],
+               clear: false, oos: false, cat: r[2] };
+    });
+    sweepSource = "catalog";
+    renderSweep();
+    renderCatPicker();
+    go("checked");
+  }).catch(function(){
+    $("sweepsum").textContent = "Catalog didn't load — open the app online once and it caches for good.";
+  });
+}
+
+function renderCatPicker(){
+  if(!CATALOG) return;
+  var cats = [];
+  CATALOG.items.forEach(function(r){ if(cats.indexOf(r[2]) === -1) cats.push(r[2]); });
+  cats.sort();
+  var html = '<div class="seg" style="margin:8px 0 4px;flex-wrap:wrap">';
+  html += '<button class="seg__b' + (catFilter ? "" : " is-on") + '" data-cat="">All</button>';
+  cats.forEach(function(c){
+    html += '<button class="seg__b' + (catFilter === c ? " is-on" : "") + '" data-cat="' + esc(c) + '">' + esc(c) + '</button>';
+  });
+  html += '</div>';
+  $("catpick").innerHTML = html;
+  $("catpick").hidden = false;
 }
 
 /* The launcher: month-matched categories plus HD's own savings
@@ -2229,7 +2285,23 @@ $("sweeplist").addEventListener("click", function(e){
   if(c) window.open(c.url, "_blank", "noopener");
 });
 $("sweepclear").addEventListener("click", function(){
-  sweepList = []; renderSweep();
+  sweepList = []; catFilter = ""; $("catpick").hidden = true; renderSweep();
+});
+
+$("catbtn").addEventListener("click", function(){
+  if(sweepSource === "catalog" && sweepList.length){
+    sweepList = []; catFilter = ""; $("catpick").hidden = true; renderSweep(); return;
+  }
+  $("sweeppick").hidden = true;
+  $("sweepstart").textContent = "🧹 Fetch fresh";
+  showCatalog();
+});
+
+$("catpick").addEventListener("click", function(e){
+  var b = e.target.closest("[data-cat]");
+  if(!b) return;
+  catFilter = b.getAttribute("data-cat");
+  showCatalog();
 });
 
 $("sweepstart").addEventListener("click", function(){
