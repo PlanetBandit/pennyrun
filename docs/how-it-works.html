@@ -1,0 +1,751 @@
+<title>Penny Run — how it works</title>
+
+<style>
+  :root {
+    --concrete: #E7E5DF;
+    --paper:    #FFFFFF;
+    --surface:  #FFFFFF;
+    --ink:      #14161A;
+    --mute:     #6E6C66;
+    --line:     #CDCAC2;
+    --hair:     #DEDBD4;
+    --tag:      #FFD400;
+    --tag-edge: #D9B200;
+    --orange:   #D9531E;
+    --go:       #1B6E42;
+    --hold:     #9A6B00;
+    --stop:     #B32218;
+    --go-bg:    #E2F0E7;
+    --hold-bg:  #FBF0D6;
+    --stop-bg:  #F8E2E0;
+
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+
+    --measure: 68ch;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --concrete: #131518;
+      --paper:    #1B1E22;
+      --surface:  #1B1E22;
+      --ink:      #E9E7E1;
+      --mute:     #9A968D;
+      --line:     #383C42;
+      --hair:     #2A2E33;
+      --tag:      #FFD400;
+      --tag-edge: #A88A00;
+      --orange:   #EF7443;
+      --go:       #55C489;
+      --hold:     #E3B248;
+      --stop:     #F27065;
+      --go-bg:    #16291F;
+      --hold-bg:  #2B2415;
+      --stop-bg:  #2E1A18;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --concrete: #131518;
+    --paper:    #1B1E22;
+    --surface:  #1B1E22;
+    --ink:      #E9E7E1;
+    --mute:     #9A968D;
+    --line:     #383C42;
+    --hair:     #2A2E33;
+    --tag:      #FFD400;
+    --tag-edge: #A88A00;
+    --orange:   #EF7443;
+    --go:       #55C489;
+    --hold:     #E3B248;
+    --stop:     #F27065;
+    --go-bg:    #16291F;
+    --hold-bg:  #2B2415;
+    --stop-bg:  #2E1A18;
+  }
+
+  :root[data-theme="light"] {
+    --concrete: #E7E5DF;
+    --paper:    #FFFFFF;
+    --surface:  #FFFFFF;
+    --ink:      #14161A;
+    --mute:     #6E6C66;
+    --line:     #CDCAC2;
+    --hair:     #DEDBD4;
+    --tag:      #FFD400;
+    --tag-edge: #D9B200;
+    --orange:   #D9531E;
+    --go:       #1B6E42;
+    --hold:     #9A6B00;
+    --stop:     #B32218;
+    --go-bg:    #E2F0E7;
+    --hold-bg:  #FBF0D6;
+    --stop-bg:  #F8E2E0;
+  }
+
+  body {
+    background: var(--concrete);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.62;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  .wrap {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 0 20px 96px;
+  }
+
+  .col { max-width: var(--measure); }
+
+  /* ---------------------------------------------------------- masthead */
+
+  .mast {
+    border-bottom: 2px solid var(--ink);
+    padding: 56px 0 22px;
+    margin-bottom: 40px;
+  }
+  .mast__tag {
+    display: inline-block;
+    background: var(--tag);
+    color: #14161A;
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    padding: 3px 9px;
+    border: 1px solid var(--tag-edge);
+    border-radius: 3px;
+  }
+  h1 {
+    font-family: var(--mono);
+    font-size: clamp(30px, 5.5vw, 46px);
+    line-height: 1.08;
+    font-weight: 700;
+    letter-spacing: -.02em;
+    text-wrap: balance;
+    margin: 18px 0 12px;
+  }
+  .mast__sub {
+    font-size: 17px;
+    color: var(--mute);
+    max-width: 62ch;
+  }
+  .mast__meta {
+    margin-top: 20px;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--mute);
+    letter-spacing: .02em;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 20px;
+  }
+
+  /* ---------------------------------------------------------- sections */
+
+  section { margin-top: 56px; }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: var(--mute);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+  .eyebrow::after {
+    content: "";
+    flex: 1;
+    height: 2px;
+    background: var(--tag);
+    max-width: 120px;
+  }
+
+  h2 {
+    font-family: var(--mono);
+    font-size: clamp(21px, 3vw, 27px);
+    line-height: 1.22;
+    font-weight: 700;
+    letter-spacing: -.01em;
+    text-wrap: balance;
+    margin-bottom: 14px;
+  }
+
+  h3 {
+    font-family: var(--mono);
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: .01em;
+    margin: 30px 0 8px;
+  }
+
+  p { margin-bottom: 14px; }
+  p:last-child { margin-bottom: 0; }
+
+  strong { font-weight: 650; }
+
+  code, .num {
+    font-family: var(--mono);
+    font-size: .89em;
+    font-variant-numeric: tabular-nums;
+  }
+  code {
+    background: var(--paper);
+    border: 1px solid var(--hair);
+    border-radius: 3px;
+    padding: 1px 5px;
+  }
+
+  /* ---------------------------------------------------------- figures */
+
+  figure {
+    margin: 30px 0 34px;
+  }
+  .plate {
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 22px 20px 18px;
+    overflow-x: auto;
+  }
+  .plate svg {
+    display: block;
+    width: 100%;
+    min-width: 720px;
+    height: auto;
+    color: var(--ink);
+  }
+  figcaption {
+    margin-top: 12px;
+    font-size: 13.5px;
+    line-height: 1.55;
+    color: var(--mute);
+    max-width: 76ch;
+  }
+  figcaption b { color: var(--ink); font-weight: 600; }
+
+  /* svg vocabulary */
+  .n-box   { fill: var(--surface); stroke: var(--line); stroke-width: 1.5; }
+  .n-src   { fill: var(--surface); stroke: var(--orange); stroke-width: 1.5; }
+  .n-key   { fill: var(--surface); stroke: var(--tag-edge); stroke-width: 2.5; }
+  .n-ghost { fill: none; stroke: var(--line); stroke-width: 1.5; stroke-dasharray: 5 4; }
+  .n-zone  { fill: none; stroke: var(--line); stroke-width: 1.5; stroke-dasharray: 2 5; }
+
+  .n-t  { font-family: var(--mono); font-size: 13px; font-weight: 700; fill: var(--ink); }
+  .n-s  { font-family: var(--sans); font-size: 10.5px; fill: var(--mute); }
+  .n-z  { font-family: var(--mono); font-size: 11px; font-weight: 700;
+          letter-spacing: .1em; fill: var(--mute); }
+  .n-a  { font-family: var(--mono); font-size: 10.5px; fill: var(--mute); }
+  .n-a--hi { fill: var(--ink); }
+
+  .n-line  { stroke: var(--ink); stroke-width: 1.5; fill: none; }
+  .n-line--soft { stroke: var(--line); stroke-width: 1.5; fill: none; }
+  .n-line--ghost { stroke: var(--line); stroke-width: 1.5; fill: none; stroke-dasharray: 5 4; }
+  .n-head { fill: var(--ink); }
+  .n-head--soft { fill: var(--line); }
+
+  .n-go   { fill: var(--go); }
+  .n-hold { fill: var(--hold); }
+  .n-stop { fill: var(--stop); }
+
+  /* ---------------------------------------------------------- tables */
+
+  .tablewrap { overflow-x: auto; margin: 20px 0 8px; }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    min-width: 420px;
+    font-size: 14px;
+  }
+  th, td {
+    text-align: left;
+    padding: 8px 14px 8px 0;
+    border-bottom: 1px solid var(--hair);
+    vertical-align: baseline;
+  }
+  th {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--mute);
+    border-bottom-color: var(--line);
+  }
+  td.n {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  tr.is-dead td { color: var(--mute); }
+
+  /* ---------------------------------------------------------- notes */
+
+  .note {
+    border-left: 3px solid var(--tag);
+    background: var(--paper);
+    padding: 14px 18px;
+    margin: 22px 0;
+    border-radius: 0 6px 6px 0;
+  }
+  .note p { font-size: 14.5px; }
+
+  .flag {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .08em;
+    padding: 1px 7px;
+    border-radius: 3px;
+  }
+  .flag--go   { background: var(--go-bg);   color: var(--go); }
+  .flag--hold { background: var(--hold-bg); color: var(--hold); }
+  .flag--stop { background: var(--stop-bg); color: var(--stop); }
+
+  ul { margin: 0 0 14px 0; padding-left: 20px; }
+  li { margin-bottom: 6px; }
+
+  .foot {
+    margin-top: 64px;
+    padding-top: 18px;
+    border-top: 1px solid var(--line);
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--mute);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+</style>
+
+<div class="wrap">
+
+  <header class="mast">
+    <span class="mast__tag">In-store clearance</span>
+    <h1>How Penny&nbsp;Run works</h1>
+    <p class="mast__sub">
+      A markdown hunter for Home Depot: a droplet asks their pricing API what
+      every product costs at each of your stores overnight, and your phone
+      answers a barcode from that list in the aisle.
+    </p>
+    <div class="mast__meta">
+      <span>build v55</span>
+      <span>7,166 clearance hits · 8 stores</span>
+      <span>pool 9,385 products</span>
+    </div>
+  </header>
+
+  <section>
+    <div class="col">
+      <div class="eyebrow">The constraint</div>
+      <h2>A price only exists once you name a store</h2>
+      <p>
+        Everything below is shaped by one fact. Home Depot's API will not quote
+        a price for an unlocalised request, and the deep markdowns belong to a
+        single building. The same bag of mulch, asked eight ways:
+      </p>
+    </div>
+
+    <div class="col tablewrap">
+      <table>
+        <thead>
+          <tr><th>Asked as</th><th>Price</th><th>Clearance</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>no store</td><td class="n">null</td><td class="n">null</td></tr>
+          <tr><td>Towson (2504)</td><td class="n">$3.33</td><td class="n"><strong>$0.10 &nbsp;−97%</strong></td></tr>
+          <tr class="is-dead"><td>Parkville (2577)</td><td class="n">$3.33</td><td class="n">none</td></tr>
+          <tr class="is-dead"><td>the other six</td><td class="n">$3.33</td><td class="n">none</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="col">
+      <p style="margin-top:16px">
+        So there is no list to fetch — there is only a question you can ask
+        4.2&nbsp;million times. That is the whole job of the nightly sweep.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <div class="col">
+      <div class="eyebrow">Overnight · on the droplet</div>
+      <h2>Discovery is broad and cheap. Verification is narrow and deep.</h2>
+      <p>
+        Pricing 4.2&nbsp;million products at eight stores is 34&nbsp;million
+        questions a night, which is not happening. So the sweep splits: find
+        candidates by asking <em>one</em> store, then confirm the survivors at
+        <em>all</em> of them.
+      </p>
+    </div>
+
+    <figure>
+      <div class="plate">
+        <svg viewBox="0 0 1090 400" role="img"
+             aria-label="Nightly pipeline: the Home Depot sitemap feeds a discover stage that prices one slice at a single rotating store; anything on clearance is promoted to a hot list, which together with the seed pool is priced at all eight stores by the scan stage, compared against last night's price ledger, then trimmed to three thousand rows and served as clearance.json.">
+          <defs>
+            <marker id="ar1" viewBox="0 0 10 10" refX="9" refY="5"
+                    markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" class="n-head"/>
+            </marker>
+          </defs>
+
+          <!-- row 1 -->
+          <rect class="n-src" x="20"  y="36" width="200" height="66" rx="6"/>
+          <text class="n-t" x="36" y="64">Sitemap</text>
+          <text class="n-s" x="36" y="81">Home Depot publishes</text>
+          <text class="n-s" x="36" y="94">4.2M products, 94 shards</text>
+
+          <rect class="n-key" x="330" y="36" width="240" height="66" rx="6"/>
+          <text class="n-t" x="348" y="64">discover</text>
+          <text class="n-s" x="348" y="81">prices 60k a night at ONE</text>
+          <text class="n-s" x="348" y="94">rotating store · 2.9% hit rate</text>
+
+          <rect class="n-box" x="680" y="36" width="190" height="66" rx="6"/>
+          <text class="n-t" x="696" y="64">prices.json</text>
+          <text class="n-s" x="696" y="81">every price from</text>
+          <text class="n-s" x="696" y="94">the run before</text>
+
+          <!-- row 2 -->
+          <rect class="n-box" x="330" y="170" width="240" height="66" rx="6"/>
+          <text class="n-t" x="348" y="198">hot list</text>
+          <text class="n-s" x="348" y="215">everything ever seen on</text>
+          <text class="n-s" x="348" y="228">clearance · drops out after 45d</text>
+
+          <rect class="n-key" x="680" y="170" width="190" height="66" rx="6"/>
+          <text class="n-t" x="696" y="198">scan</text>
+          <text class="n-s" x="696" y="215">every product at</text>
+          <text class="n-s" x="696" y="228">all 8 stores · 6.5 min</text>
+
+          <rect class="n-box" x="930" y="170" width="140" height="66" rx="6"/>
+          <text class="n-t" x="944" y="198">served</text>
+          <text class="n-s" x="944" y="215">clearance.json</text>
+          <text class="n-s" x="944" y="228">3,000 rows</text>
+
+          <!-- row 3 -->
+          <rect class="n-box" x="330" y="290" width="240" height="66" rx="6"/>
+          <text class="n-t" x="348" y="318">seed pool</text>
+          <text class="n-s" x="348" y="335">8.3k from clearance searches</text>
+          <text class="n-s" x="348" y="348">1.5% hit rate — worse than random</text>
+
+          <!-- arrows -->
+          <path class="n-line" d="M220,69 H322" marker-end="url(#ar1)"/>
+          <text class="n-a" x="271" y="60" text-anchor="middle">one shard</text>
+
+          <path class="n-line" d="M450,102 V162" marker-end="url(#ar1)"/>
+          <text class="n-a n-a--hi" x="462" y="130">promotes</text>
+          <text class="n-a" x="462" y="144">what is on clearance</text>
+
+          <path class="n-line" d="M570,190 H672" marker-end="url(#ar1)"/>
+          <text class="n-a" x="621" y="181" text-anchor="middle">nightly</text>
+
+          <path class="n-line" d="M570,323 H625 V222 H672" marker-end="url(#ar1)"/>
+          <text class="n-a" x="634" y="290">+ seed</text>
+
+          <path class="n-line" d="M752,102 V162" marker-end="url(#ar1)"/>
+          <path class="n-line" d="M800,162 V106" marker-end="url(#ar1)"/>
+          <text class="n-a" x="812" y="128">reads last night</text>
+          <text class="n-a" x="812" y="142">writes tonight</text>
+
+          <path class="n-line" d="M870,203 H922" marker-end="url(#ar1)"/>
+
+          <!-- the gate sits on that last hop: a collapsed run never crosses it -->
+          <circle cx="896" cy="203" r="6" fill="var(--tag)" stroke="var(--tag-edge)" stroke-width="1.5"/>
+          <path class="n-line--soft" d="M896,209 V246"/>
+          <text class="n-a n-a--hi" x="896" y="262" text-anchor="middle">a collapsed run</text>
+          <text class="n-a" x="896" y="276" text-anchor="middle">never gets past here</text>
+        </svg>
+      </div>
+      <figcaption>
+        <b>The nightly pipeline.</b> Pricing a product at one store instead of
+        eight buys eight times the breadth for the same budget — so discovery
+        walks the catalogue cheaply, and only confirmed finds earn a place in
+        the nightly eight-store scan. One shard of ninety-four produced 1,044
+        finds and took the list from 892 hits to 7,166.
+      </figcaption>
+    </figure>
+
+    <div class="col">
+      <h3>The keyword pool was the weaker half</h3>
+      <p>
+        The seed pool was built by scraping <code>"&lt;term&gt; clearance"</code>
+        searches, which sounds like the obvious source and measured worse than
+        picking products at random: <span class="num">1.5%</span> of its products
+        are on clearance against <span class="num">2.9%</span> of random sitemap
+        products. Searching for "clearance" finds what Home Depot <em>markets</em>
+        as clearance — the shallow national stuff — not a store manager emptying
+        a pallet. The deep cuts are on things nobody thinks to search for. That
+        is why they got cut.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <div class="col">
+      <div class="eyebrow">In the aisle · on the phone</div>
+      <h2>Scan a box, get an answer before the camera refocuses</h2>
+      <p>
+        The list is already on the phone, so a barcode is answered from local
+        data with no network at all — which matters in the back corner of a
+        building made of steel racking.
+      </p>
+    </div>
+
+    <figure>
+      <div class="plate">
+        <svg viewBox="0 0 1140 460" role="img"
+             aria-label="In-store flow: the sweep list is fetched when the app opens; scanning a box UPC either matches the sweep, filling in price, was-price, stock, SKU and any overnight drop, or does not match, in which case the yellow tag is read by OCR into a clue sheet. Either path produces a verdict of green, yellow or red, and a green verdict means take one box to self-checkout, which is the only real proof.">
+          <defs>
+            <marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5"
+                    markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" class="n-head"/>
+            </marker>
+          </defs>
+
+          <rect class="n-box" x="20" y="195" width="230" height="66" rx="6"/>
+          <text class="n-t" x="38" y="223">The sweep list</text>
+          <text class="n-s" x="38" y="240">3,000 rows · your stores</text>
+          <text class="n-s" x="38" y="253">fetched fresh on every open</text>
+
+          <rect class="n-key" x="340" y="195" width="180" height="66" rx="6"/>
+          <text class="n-t" x="356" y="223">Scan a box</text>
+          <text class="n-s" x="356" y="240">camera reads the UPC</text>
+          <text class="n-s" x="356" y="253">no signal needed</text>
+
+          <rect class="n-box" x="610" y="50" width="220" height="66" rx="6"/>
+          <text class="n-t" x="626" y="78">On the sweep</text>
+          <text class="n-s" x="626" y="95">price, was, stock, SKU,</text>
+          <text class="n-s" x="626" y="108">and whether it fell last night</text>
+
+          <rect class="n-box" x="610" y="340" width="220" height="66" rx="6"/>
+          <text class="n-t" x="626" y="368">Not on the sweep</text>
+          <text class="n-s" x="626" y="385">snap the yellow tag ·</text>
+          <text class="n-s" x="626" y="398">OCR fills the clue sheet</text>
+
+          <rect class="n-box" x="920" y="195" width="200" height="66" rx="6"/>
+          <text class="n-t" x="936" y="220">Verdict</text>
+          <circle class="n-go"   cx="942" cy="240" r="5"/>
+          <circle class="n-hold" cx="962" cy="240" r="5"/>
+          <circle class="n-stop" cx="982" cy="240" r="5"/>
+          <text class="n-s" x="996" y="244">green · yellow · red</text>
+
+          <rect class="n-key" x="920" y="340" width="200" height="66" rx="6"/>
+          <text class="n-t" x="936" y="368">Self-checkout</text>
+          <text class="n-s" x="936" y="385">scan the box UPC —</text>
+          <text class="n-s" x="936" y="398">the only real proof</text>
+
+          <!-- arrows -->
+          <path class="n-line" d="M250,228 H332" marker-end="url(#ar2)"/>
+          <text class="n-a" x="291" y="219" text-anchor="middle">walk it</text>
+
+          <path class="n-line--soft" d="M520,228 H565"/>
+          <path class="n-line" d="M565,228 V83 H602" marker-end="url(#ar2)"/>
+          <path class="n-line" d="M565,228 V373 H602" marker-end="url(#ar2)"/>
+          <text class="n-a n-a--hi" x="577" y="150">matched</text>
+          <text class="n-a" x="577" y="164">answers offline</text>
+          <text class="n-a" x="577" y="300">no match</text>
+
+          <path class="n-line--soft" d="M830,83 H875 V228"/>
+          <path class="n-line--soft" d="M830,373 H875 V228"/>
+          <path class="n-line" d="M875,228 H912" marker-end="url(#ar2)"/>
+          <text class="n-a" x="884" y="200">clues</text>
+
+          <path class="n-line" d="M1020,261 V332" marker-end="url(#ar2)"/>
+          <text class="n-a n-a--hi" x="1032" y="292">if green,</text>
+          <text class="n-a" x="1032" y="306">take ONE box</text>
+        </svg>
+      </div>
+      <figcaption>
+        <b>The in-store flow.</b> A match fills in everything the sweep knows
+        and flashes a verdict; a miss falls back to reading the yellow tag on
+        the shelf. Both paths converge on the same conclusion — the register
+        sets the price, and nothing before it is proof.
+      </figcaption>
+    </figure>
+
+    <div class="col">
+      <h3>What the verdict actually counts</h3>
+      <p>
+        Clues stack into a score. <span class="flag flag--go">GREEN</span> needs
+        five points <em>and</em> an anchor clue — a printed date, a "was" price,
+        or a confirmed clearance price. <span class="flag flag--hold">YELLOW</span>
+        needs two. Everything else is
+        <span class="flag flag--stop">RED</span>.
+      </p>
+    </div>
+
+    <div class="col tablewrap">
+      <table>
+        <thead>
+          <tr><th>Clue</th><th>Weight</th><th>Where it comes from</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Tag has a printed date</td><td class="n">+2</td><td>you, or tag OCR</td></tr>
+          <tr><td>Tag shows a "was" price</td><td class="n">+2</td><td>you, or tag OCR</td></tr>
+          <tr><td>App shows a clearance price</td><td class="n">+2</td><td>the sweep</td></tr>
+          <tr><td>Unavailable at this store</td><td class="n">+2</td><td>you</td></tr>
+          <tr><td>70%+ off the "was"</td><td class="n">+1</td><td>the sweep</td></tr>
+          <tr><td>Has a replacement SKU</td><td class="n">+1</td><td>the sweep</td></tr>
+          <tr><td>Price fell since last night</td><td class="n">+1</td><td>the sweep</td></tr>
+          <tr><td>Stock out of place</td><td class="n">+1</td><td>you</td></tr>
+          <tr><td>Yellow tag, no date, no "was"</td><td class="n">−2</td><td>you — that's a promo</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="note col">
+      <p>
+        <strong>Two signals were measured and left out.</strong> "Store only"
+        looks like it should predict a markdown and points the wrong way — 14%
+        among clearance items against 22% among everything else — so it shows on
+        the row as information but scores nothing. And
+        <code>discontinued</code>, <code>obsolete</code> and
+        <code>isBuryProduct</code> are the obvious fields to reach for; across
+        636 products all three are always false or null.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <div class="col">
+      <div class="eyebrow">Topology</div>
+      <h2>One droplet does both jobs</h2>
+      <p>
+        Because the machine that sweeps is also the machine that serves, the
+        nightly job writes <code>clearance.json</code> straight into what the
+        web server is already handing out. No build step, no deploy, no waiting.
+      </p>
+    </div>
+
+    <figure>
+      <div class="plate">
+        <svg viewBox="0 0 1040 400" role="img"
+             aria-label="Topology: GitHub holds the source and is pulled to the droplet on deploy. On the droplet, systemd timers price eight stores against the Home Depot API nightly and write clearance.json into a data directory outside the git checkout; Caddy serves that directory and the app over HTTPS to the installed phone app. GitHub Pages remains as an optional stale fallback.">
+          <defs>
+            <marker id="ar3" viewBox="0 0 10 10" refX="9" refY="5"
+                    markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" class="n-head"/>
+            </marker>
+            <marker id="ar3s" viewBox="0 0 10 10" refX="9" refY="5"
+                    markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" class="n-head--soft"/>
+            </marker>
+          </defs>
+
+          <!-- droplet zone -->
+          <rect class="n-zone" x="270" y="40" width="420" height="300" rx="10"/>
+          <text class="n-z" x="286" y="32">DROPLET</text>
+
+          <rect class="n-box" x="20" y="80" width="160" height="56" rx="6"/>
+          <text class="n-t" x="34" y="106">GitHub</text>
+          <text class="n-s" x="34" y="123">source only</text>
+
+          <rect class="n-key" x="300" y="80" width="160" height="56" rx="6"/>
+          <text class="n-t" x="314" y="106">timers</text>
+          <text class="n-s" x="314" y="123">05:10 sweep · Sun harvest</text>
+
+          <rect class="n-box" x="300" y="170" width="360" height="56" rx="6"/>
+          <text class="n-t" x="314" y="196">/var/lib/pennyrun</text>
+          <text class="n-s" x="314" y="213">outside git — a deploy never fights last night's data</text>
+
+          <rect class="n-box" x="300" y="262" width="360" height="56" rx="6"/>
+          <text class="n-t" x="314" y="288">Caddy</text>
+          <text class="n-s" x="314" y="305">automatic certificate — iOS gives no camera without one</text>
+
+          <rect class="n-src" x="760" y="80" width="250" height="56" rx="6"/>
+          <text class="n-t" x="776" y="106">Home Depot API</text>
+          <text class="n-s" x="776" y="123">no key, no cookie — just name a store</text>
+
+          <rect class="n-key" x="760" y="257" width="250" height="66" rx="6"/>
+          <text class="n-t" x="776" y="285">Your phone</text>
+          <text class="n-s" x="776" y="302">installed to the home screen,</text>
+          <text class="n-s" x="776" y="315">works with no bars</text>
+
+          <rect class="n-ghost" x="20" y="262" width="160" height="56" rx="6"/>
+          <text class="n-t" x="34" y="288" fill="currentColor" opacity=".55">Pages</text>
+          <text class="n-s" x="34" y="305">optional fallback</text>
+
+          <!-- arrows -->
+          <path class="n-line" d="M180,108 H262" marker-end="url(#ar3)"/>
+          <text class="n-a" x="221" y="99" text-anchor="middle">git pull</text>
+
+          <path class="n-line" d="M460,108 H752" marker-end="url(#ar3)"/>
+          <text class="n-a n-a--hi" x="606" y="99" text-anchor="middle">prices 9,385 products at 8 stores</text>
+
+          <path class="n-line" d="M380,136 V162" marker-end="url(#ar3)"/>
+          <text class="n-a" x="392" y="155">writes clearance.json</text>
+
+          <path class="n-line" d="M380,226 V254" marker-end="url(#ar3)"/>
+          <text class="n-a" x="392" y="246">served as /clearance.json</text>
+
+          <path class="n-line" d="M660,290 H752" marker-end="url(#ar3)"/>
+          <text class="n-a" x="706" y="281" text-anchor="middle">HTTPS</text>
+
+          <path class="n-line--ghost" d="M100,136 V254" marker-end="url(#ar3s)"/>
+          <path class="n-line--ghost" d="M100,318 V370 H880 V331" marker-end="url(#ar3s)"/>
+          <text class="n-a" x="470" y="364" text-anchor="middle">still deploys on push · serves the last committed list, stale</text>
+        </svg>
+      </div>
+      <figcaption>
+        <b>What runs where.</b> The droplet is the whole system; GitHub is just
+        where the code lives. Sweep state deliberately sits outside the git
+        checkout, so <code>update.sh</code> can hard-reset to the branch without
+        ever destroying a night's data.
+      </figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <div class="col">
+      <div class="eyebrow">Failure modes</div>
+      <h2>What stops bad data reaching the aisle</h2>
+      <p>
+        The expensive failure is not a crash — it is a sweep that quietly
+        returns nothing and replaces a good list with an empty one. That has
+        already happened once, on a GitHub runner, and it looked exactly like
+        eight stores with nothing on clearance.
+      </p>
+      <ul>
+        <li><strong>The probe runs first.</strong> It knocks on all three Home
+          Depot hosts with no retries and no swallowed exceptions, so a machine
+          that is being refused says so on the line that matters.</li>
+        <li><strong>The scan will not write a collapsed run.</strong> Empty, or
+          below 40% of the previous total, and yesterday's list keeps serving.</li>
+        <li><strong>The harvest keeps the old pool</strong> if a run comes back
+          below 60% — that is Home Depot changing their markup, not the catalogue
+          shrinking.</li>
+        <li><strong>The file is renamed into place,</strong> so a phone fetching
+          mid-sweep gets the old list whole rather than half a new one.</li>
+      </ul>
+    </div>
+
+    <div class="note col">
+      <p>
+        <strong>Not every machine can run this.</strong> GitHub's hosted runners
+        get <code>206 Generic Errors API</code> from the pricing API for their
+        whole address range — measured four ways, including origin and referer
+        headers, a desktop user-agent, and Apollo client headers. All four were
+        refused; the same code from a residential address gets 200 every time.
+        It is the address, so no header fixes it. Check any new box with
+        <code>tools/checkhost.py</code> before building on it.
+      </p>
+    </div>
+  </section>
+
+  <p class="foot">
+    Penny Run · build v55 · the register is the only real proof
+  </p>
+
+</div>
