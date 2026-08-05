@@ -571,7 +571,7 @@ input,select,textarea{font-family:inherit;font-size:16px}
   <div class="flaglist is-on" data-f="go" id="flags-go"></div>
   <div class="flaglist" data-f="hold" id="flags-hold"></div>
   <div class="flaglist" data-f="stop" id="flags-stop"></div>
-  <p class="scan__hint" style="text-align:center;margin-top:16px">Penny Run · build v51</p>
+  <p class="scan__hint" style="text-align:center;margin-top:16px">Penny Run · build v52</p>
 </section>
 
 <!-- ============ ASSESSMENT SHEET ============ -->
@@ -1141,10 +1141,98 @@ function findByUPC(code){
   return null;
 }
 
+/* ============================================================
+   SWEEP LOOKUP ON SCAN — the sweep already knows the confirmed
+   clearance price for every UPC it found. Scanning a box in the
+   aisle answers from that, offline, before the tag is even read.
+   ============================================================ */
+var CATUPC = null;
+
+function buildCatIndex(d){
+  CATUPC = {};
+  ((d && d.hits) || []).forEach(function(r){
+    var u = normUPC(r[10]);
+    if(!u) return;
+    (CATUPC[u] = CATUPC[u] || []).push({
+      name: r[0], id: r[1], cat: r[2], price: r[3], was: r[4], pct: r[5],
+      store: r[6], qty: (r[7] == null ? null : r[7]),
+      url: "https://www.homedepot.com" + (r[9] || "/p/" + r[1]),
+      upc: u, sku: r[11] || "", model: r[12] || ""
+    });
+  });
+  return CATUPC;
+}
+
+/* every sweep row for this barcode, the stores you picked first and
+   the deepest cut on top — that is the row worth acting on */
+function catalogRows(code){
+  var u = normUPC(code);
+  if(!u || !CATUPC) return [];
+  var rows = (CATUPC[u] || []).slice();
+  var picked = state.pickedStores || [];
+  rows.sort(function(a, b){
+    var ap = picked.indexOf(a.store) !== -1 ? 0 : 1;
+    var bp = picked.indexOf(b.store) !== -1 ? 0 : 1;
+    if(ap !== bp) return ap - bp;
+    var az = a.qty === 0 ? 1 : 0, bz = b.qty === 0 ? 1 : 0;
+    if(az !== bz) return az - bz;
+    return b.pct - a.pct;
+  });
+  return rows;
+}
+
+function sweepSummary(rows){
+  var b = rows[0];
+  var s = "🏷️ On the sweep — " + storeName(b.store) + " $" + b.price.toFixed(2) +
+          " was $" + (b.was || 0).toFixed(2) + " (-" + b.pct + "%)" +
+          (b.qty == null ? "" : b.qty > 0 ? ", " + b.qty + " on shelf" : ", none on that shelf") + ".";
+  /* a deeper cut one store over is worth knowing before you buy here */
+  var cheaper = rows.slice(1).filter(function(r){ return r.price < b.price; })
+                    .sort(function(x, y){ return x.price - y.price; })[0];
+  if(cheaper){
+    s += " Cheaper at " + storeName(cheaper.store) + " $" + cheaper.price.toFixed(2) +
+         " (-" + cheaper.pct + "%).";
+  }
+  if(rows.length > 1) s += " Found at " + rows.length + " of your stores.";
+  return s;
+}
+
+/* what the sweep proves on its own: Home Depot's own API returned an
+   in-store clearance price, and how deep the cut is */
+function applyCatalog(item, rows){
+  var b = rows[0];
+  item.clues = item.clues || {};
+  item.clues.appclear = true;
+  if(b.pct >= 70) item.clues.deep = true;
+  if(!item.name) item.name = b.name;
+  if(item.now == null) item.now = b.price;
+  if(item.was == null) item.was = b.was;
+  if(!item.ending) item.ending = endingFor(b.price);
+  item.hdurl = b.url; /* canonical path — /p/<id> errors inside the HD app */
+  var line = [b.sku ? "SKU " + b.sku : "", b.model ? "MODEL " + b.model : "", b.cat].filter(Boolean).join(" · ");
+  if(line && (item.notes || "").indexOf(line) === -1){
+    item.notes = (item.notes ? item.notes + "\n" : "") + line;
+  }
+  return item;
+}
+
 function handleAssess(code){
+  var rows = catalogRows(code);
   var hit = findByUPC(code);
   if(hit){
-    announceVerdict(hit, null);
+    if(rows.length) applyCatalog(hit, rows);
+    save(); renderItems();
+    announceVerdict(hit, rows.length ? { summary: sweepSummary(rows) } : null);
+    return;
+  }
+  if(rows.length){
+    var item = { id: "i-" + Date.now().toString(36), at: Date.now(),
+                 name: "", upc: normUPC(code), notes: "",
+                 clues: {}, ending: "", register: "" };
+    applyCatalog(item, rows);
+    state.items.unshift(item);
+    save(); renderItems();
+    announceVerdict(item, { summary: sweepSummary(rows) });
     return;
   }
   beep("good");
@@ -1200,7 +1288,12 @@ function announceVerdict(item, read){
   if(v.flag === "green" && item.upc){
     acts.push({ t:"Match boxes", c:"btn--ghost", fn:function(){ setMode("verify", item.id); } });
   }
-  if(item.upc){
+  if(item.hdurl){
+    acts.push({ t:"Open product ↗", c:"btn--ghost", fn:function(){
+      armMerge(item.id);
+      window.open(item.hdurl, "_blank", "noopener");
+    }});
+  } else if(item.upc){
     acts.push({ t:"Look up at HD ↗", c:"btn--ghost", fn:function(){
       armMerge(item.id);
       openHD(item.upc);
@@ -1601,7 +1694,7 @@ var CATALOG = null;
 function loadCatalog(){
   if(CATALOG) return Promise.resolve(CATALOG);
   return fetch("clearance.json").then(function(r){ return r.json(); })
-    .then(function(d){ CATALOG = d; return d; });
+    .then(function(d){ CATALOG = d; buildCatIndex(d); return d; });
 }
 
 /* hits carry [name, id, cat, clearancePrice, wasPrice, pctOff] and
@@ -1727,7 +1820,7 @@ function handleHDShare(text){
 
 function showRead(tone, icon, label, name, code, note, acts){
   acts = (acts || []).slice();
-  var hasLookup = acts.some(function(a){ return /Look up/.test(a.t); });
+  var hasLookup = acts.some(function(a){ return /Look up|Open product/.test(a.t); });
   if(code && !hasLookup) acts.push({ t:"Look up at HD ↗", c:"btn--ghost", fn:function(){ openHD(code); } });
   var r = $("read");
   r.className = "read read--" + tone;
@@ -2462,6 +2555,10 @@ renderSteps();
 renderFlags();
 renderSweep();
 setMode("assess", null);
+
+/* the sweep index has to be in hand before the first barcode, so it
+   loads at boot rather than on the first tap of Show clearance */
+loadCatalog().then(function(){ loadHdStores().catch(function(){}); }).catch(function(){});
 
 (function(){
   var m = new Date().getMonth();
