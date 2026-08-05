@@ -315,6 +315,18 @@ input,select,textarea{font-family:inherit;font-size:16px}
 .storeitem b{display:block}
 .storeitem__addr{display:block;font-size:11.5px;color:var(--mute);margin-top:1px}
 .storeitem__d{font-family:var(--mono);font-size:11.5px;font-weight:700;white-space:nowrap}
+.cattile{
+  flex:none;width:52px;min-height:38px;border-radius:8px;background:var(--ink);color:var(--tag);
+  font-family:var(--sans);font-size:8.5px;font-weight:800;letter-spacing:.04em;
+  text-transform:uppercase;display:flex;align-items:center;justify-content:center;
+  text-align:center;padding:3px 2px;line-height:1.15;word-break:break-word;
+}
+.storeitem__price{font-size:13px;font-weight:800;color:var(--go)}
+.storeitem__was{font-size:11.5px;color:var(--mute);font-weight:400}
+.storeitem__off{
+  font-family:var(--mono);font-size:11px;font-weight:800;white-space:nowrap;
+  background:var(--stop);color:#fff;border-radius:5px;padding:2px 5px;
+}
 .guide{
   background:var(--paper);border:1px solid var(--line);border-radius:10px;
   padding:0 12px;margin-top:10px;box-shadow:var(--lift);
@@ -520,7 +532,6 @@ input,select,textarea{font-family:inherit;font-size:16px}
     <p class="scan__hint" id="sweepsum" style="margin:0 0 8px"></p>
     <div id="sweeplist"></div>
     <div id="sweeppick" hidden></div>
-    <div id="catpick" hidden></div>
     <div style="display:flex;gap:6px;margin-top:8px">
       <button class="btn btn--tag btn--sm" id="catbtn" style="flex:1">📖 Browse clearance</button>
       <button class="btn btn--ghost btn--sm" id="sweepstart" style="flex:1">🧹 Fetch fresh</button>
@@ -569,7 +580,7 @@ input,select,textarea{font-family:inherit;font-size:16px}
   <div class="flaglist is-on" data-f="go" id="flags-go"></div>
   <div class="flaglist" data-f="hold" id="flags-hold"></div>
   <div class="flaglist" data-f="stop" id="flags-stop"></div>
-  <p class="scan__hint" style="text-align:center;margin-top:16px">Penny Run · build v38</p>
+  <p class="scan__hint" style="text-align:center;margin-top:16px">Penny Run · build v39</p>
 </section>
 
 <!-- ============ ASSESSMENT SHEET ============ -->
@@ -1525,6 +1536,14 @@ var sweepList = [];
 
 var sweepSource = "sweep";
 
+/* department names trimmed so the tile never breaks mid-word */
+var CAT_SHORT = {
+  "Appliances":"APPLNC", "Building":"BUILD", "Electrical":"ELEC", "Furniture":"FURN",
+  "Flooring":"FLOOR", "Hardware":"HARDW", "Lighting":"LIGHT", "Plumbing":"PLUMB",
+  "Smart Home":"SMART", "Fans & AC":"FAN/AC", "Cleaning":"CLEAN", "Ladders":"LADDER"
+};
+function shortCat(c){ return CAT_SHORT[c] || c; }
+
 function renderSweep(){
   var list = sweepList;
   $("sweepclear").hidden = !list.length;
@@ -1533,15 +1552,12 @@ function renderSweep(){
     $("sweeplist").innerHTML = "";
     return;
   }
-  if(sweepSource === "catalog" && catFilter === "__hits"){
-    $("sweepsum").textContent = list.length + " products confirmed carrying the in-store clearance tag" +
+  if(sweepSource === "catalog"){
+    $("sweepsum").textContent = list.length + " products carrying the in-store clearance tag" +
       (CATALOG && CATALOG.store ? " at store #" + CATALOG.store : "") +
-      (CATALOG && CATALOG.harvested ? ", checked " + CATALOG.harvested : "") +
-      ". Prices are what the tag says — the register still has the final word.";
-  } else if(sweepSource === "catalog"){
-    $("sweepsum").textContent = list.length + " products from Home Depot clearance searches" +
-      (CATALOG && CATALOG.harvested ? " (catalog built " + CATALOG.harvested + ")" : "") +
-      ". Not confirmed markdowns — tap 🏷️ On clearance for the verified ones.";
+      (CATALOG && CATALOG.pool ? ", from " + CATALOG.pool + " swept" : "") +
+      (CATALOG && CATALOG.harvested ? " on " + CATALOG.harvested : "") +
+      ". Deepest markdown first — the register still has the final word.";
   } else {
     var flagged = list.filter(function(c){ return c.clear || c.oos; }).length;
     $("sweepsum").textContent = flagged
@@ -1556,14 +1572,15 @@ function renderSweep(){
   list = sweepList;
   var html = "";
   list.forEach(function(c, i){
-    var badge = c.clear ? "🏷️" : c.oos ? "🚫" : "·";
     html += '<button class="storeitem" data-sweep="' + i + '" style="width:100%;text-align:left">';
+    if(c.cat) html += '<span class="cattile">' + esc(shortCat(c.cat)) + '</span>';
     html +=   '<div style="flex:1;min-width:0"><b>' + esc(c.name.slice(0, 60)) + '</b>';
     if(c.price != null){
-      html +=   '<span class="storeitem__addr"><b style="color:var(--go);display:inline">$' + c.price.toFixed(2) +
-                '</b> was $' + (c.was || 0).toFixed(2) + ' · ' + c.pct + '% off</span></div>';
-      html +=   '<span class="storeitem__d">' + badge + " ↗</span>";
+      html +=   '<span class="storeitem__addr"><span class="storeitem__price">$' + c.price.toFixed(2) +
+                '</span> <span class="storeitem__was">was $' + (c.was || 0).toFixed(2) + '</span></span></div>';
+      html +=   '<span class="storeitem__off">-' + c.pct + '%</span>';
     } else {
+      var badge = c.clear ? "🏷️" : c.oos ? "🚫" : "·";
       html +=     '<span class="storeitem__addr">' + (c.clear ? "clearance signal · " : c.oos ? "online-unavailable · " : "") + "#" + esc(c.id) + '</span></div>';
       html +=   '<span class="storeitem__d">' + badge + " ↗</span>";
     }
@@ -1586,7 +1603,7 @@ function showSweep(list){
    there instantly with no shortcut and no network. Candidates
    to check, not confirmed markdowns.
    ============================================================ */
-var CATALOG = null, catFilter = "";
+var CATALOG = null;
 
 function loadCatalog(){
   if(CATALOG) return Promise.resolve(CATALOG);
@@ -1597,49 +1614,22 @@ function loadCatalog(){
 /* hits carry [name, id, cat, clearancePrice, wasPrice, pctOff] and
    were confirmed against Home Depot's own pricing API — those are
    the "See In-Store Clearance Price" items. */
+/* One list, every product carrying the in-store clearance tag,
+   deepest discount first. The department rides on the row as a
+   tile so the whole sweep reads as a single walking list. */
 function showCatalog(){
   loadCatalog().then(function(d){
-    var rows;
-    if(catFilter === "__hits"){
-      rows = (d.hits || []).map(function(r){
-        return { name: r[0], id: r[1], url: "https://www.homedepot.com/p/" + r[1],
-                 clear: true, oos: false, cat: r[2],
-                 price: r[3], was: r[4], pct: r[5] };
-      });
-    } else {
-      rows = d.items.filter(function(r){ return !catFilter || r[2] === catFilter; })
-        .map(function(r){
-          return { name: r[0], id: r[1], url: "https://www.homedepot.com/p/" + r[1],
-                   clear: false, oos: false, cat: r[2] };
-        });
-    }
-    sweepList = rows;
+    sweepList = (d.hits || []).map(function(r){
+      return { name: r[0], id: r[1], url: "https://www.homedepot.com/p/" + r[1],
+               clear: true, oos: false, cat: r[2],
+               price: r[3], was: r[4], pct: r[5] };
+    });
     sweepSource = "catalog";
     renderSweep();
-    renderCatPicker();
     go("checked");
   }).catch(function(){
     $("sweepsum").textContent = "Catalog didn't load — open the app online once and it caches for good.";
   });
-}
-
-function renderCatPicker(){
-  if(!CATALOG) return;
-  var cats = [];
-  CATALOG.items.forEach(function(r){ if(cats.indexOf(r[2]) === -1) cats.push(r[2]); });
-  cats.sort();
-  var html = '<div class="seg" style="margin:8px 0 4px;flex-wrap:wrap">';
-  if(CATALOG.hits && CATALOG.hits.length){
-    html += '<button class="seg__b' + (catFilter === "__hits" ? " is-on" : "") +
-            '" data-cat="__hits" style="flex:2">🏷️ On clearance (' + CATALOG.hits.length + ')</button>';
-  }
-  html += '<button class="seg__b' + (catFilter ? "" : " is-on") + '" data-cat="">All</button>';
-  cats.forEach(function(c){
-    html += '<button class="seg__b' + (catFilter === c ? " is-on" : "") + '" data-cat="' + esc(c) + '">' + esc(c) + '</button>';
-  });
-  html += '</div>';
-  $("catpick").innerHTML = html;
-  $("catpick").hidden = false;
 }
 
 /* The launcher: month-matched categories plus HD's own savings
@@ -2313,24 +2303,18 @@ $("sweeplist").addEventListener("click", function(e){
   if(c) window.open(c.url, "_blank", "noopener");
 });
 $("sweepclear").addEventListener("click", function(){
-  sweepList = []; catFilter = ""; $("catpick").hidden = true; renderSweep();
+  sweepList = []; renderSweep();
 });
 
 $("catbtn").addEventListener("click", function(){
   if(sweepSource === "catalog" && sweepList.length){
-    sweepList = []; catFilter = ""; $("catpick").hidden = true; renderSweep(); return;
+    sweepList = []; renderSweep(); return;
   }
   $("sweeppick").hidden = true;
   $("sweepstart").textContent = "🧹 Fetch fresh";
   showCatalog();
 });
 
-$("catpick").addEventListener("click", function(e){
-  var b = e.target.closest("[data-cat]");
-  if(!b) return;
-  catFilter = b.getAttribute("data-cat");
-  showCatalog();
-});
 
 $("sweepstart").addEventListener("click", function(){
   var p = $("sweeppick");
