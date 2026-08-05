@@ -478,6 +478,7 @@ input,select,textarea{font-family:inherit;font-size:16px}
     </ol>
     <p class="guide__p">Why not a full-page capture? Home Depot's page draws itself with JavaScript after loading, so PDF/screenshot renders only catch the empty shell — the page's raw code is where the data actually lives.</p>
     <p class="guide__p"><b>Power move:</b> set your store in the Stores tab, then add the Cookie header it gives you to the “Get Contents of URL” action — the shortcut then fetches every page as YOUR store, in-store clearance price included.</p>
+    <p class="guide__p">Once this shortcut exists, <b>Sweep</b> (Checked tab) can call it directly: tap a category and it fetches that clearance page and fills the candidate list without you leaving Penny Run.</p>
   </details>
 </section>
 
@@ -566,7 +567,7 @@ input,select,textarea{font-family:inherit;font-size:16px}
   <div class="flaglist is-on" data-f="go" id="flags-go"></div>
   <div class="flaglist" data-f="hold" id="flags-hold"></div>
   <div class="flaglist" data-f="stop" id="flags-stop"></div>
-  <p class="scan__hint" style="text-align:center;margin-top:16px">Penny Run · build v28</p>
+  <p class="scan__hint" style="text-align:center;margin-top:16px">Penny Run · build v29</p>
 </section>
 
 <!-- ============ ASSESSMENT SHEET ============ -->
@@ -720,7 +721,7 @@ var CLUES = [
 
 var ENDING_SCORE = { "":0, "06":1, "03":1, "02":2, "01":0, "penny":4 };
 
-var state = { items: [], steps: [], myStore: null, mode: "assess", verifyId: null };
+var state = { items: [], steps: [], myStore: null, shortcutName: "", mode: "assess", verifyId: null };
 
 function load(){
   try{
@@ -730,6 +731,7 @@ function load(){
       state.items = Array.isArray(p.items) ? p.items : [];
       state.steps = Array.isArray(p.steps) ? p.steps : [];
       state.myStore = (p.myStore && p.myStore.num) ? p.myStore : null;
+      state.shortcutName = p.shortcutName || "";
       return;
     }
   }catch(e){ /* first run or storage blocked */ }
@@ -738,7 +740,7 @@ function load(){
   state.myStore = null;
 }
 function save(){
-  try{ localStorage.setItem(KEY, JSON.stringify({items:state.items, steps:state.steps, myStore:state.myStore})); }
+  try{ localStorage.setItem(KEY, JSON.stringify({items:state.items, steps:state.steps, myStore:state.myStore, shortcutName:state.shortcutName})); }
   catch(e){ /* private mode — app still works for this session */ }
 }
 
@@ -1494,21 +1496,55 @@ function showSweep(list){
 }
 
 /* The launcher: month-matched categories plus HD's own savings
-   pages. The app can't fetch these itself (the browser blocks
-   cross-site reads), so each opens in the HD app to share back. */
+   pages. The browser can't fetch homedepot.com itself, but the
+   shortcut can — so "Fetch here" hands the category URL straight
+   to it and the harvest lands back in this list. */
+function huntURL(q){
+  return q === "__savings"
+    ? "https://www.homedepot.com/c/Savings_Center"
+    : "https://www.homedepot.com/s/" + encodeURIComponent(q);
+}
+
+var sweepMode = "fetch";
+
+function shortcutURL(q){
+  var name = (state.shortcutName || "Send To Penny Run");
+  return "shortcuts://run-shortcut?name=" + encodeURIComponent(name) +
+         "&input=text&text=" + encodeURIComponent(huntURL(q));
+}
+
+function runHunt(q){
+  if(sweepMode === "browse"){ window.open(huntURL(q), "_blank", "noopener"); return; }
+  $("sweepsum").textContent = "Running your shortcut on that category… it fetches the page and comes back here with the candidates.";
+  location.href = shortcutURL(q);
+}
+
 function renderSweepPicker(){
   var m = new Date().getMonth();
   var picks = SEASON_HUNT[m].slice();
-  var html = '<p class="scan__hint" style="margin:8px 0 6px">Open one at your store, then <b>share the results page</b> back to Penny Run:</p>';
+  var html = '<div class="seg" style="margin:8px 0 7px">';
+  html += '<button class="seg__b' + (sweepMode === "fetch" ? " is-on" : "") + '" data-smode="fetch">⚡ Fetch here</button>';
+  html += '<button class="seg__b' + (sweepMode === "browse" ? " is-on" : "") + '" data-smode="browse">🏬 Browse in HD</button>';
+  html += '</div>';
+  html += '<p class="scan__hint" style="margin:0 0 6px">' + (sweepMode === "fetch"
+    ? "Tap a category — your shortcut fetches it and the candidates land in this list."
+    : "Opens at your store in the HD app; share the results page back here.") + '</p>';
   html += '<div class="seg" style="margin-bottom:6px">';
   picks.forEach(function(p){
     html += '<button class="seg__b" data-hunt="' + esc(p[1]) + '">' + esc(p[0]) + '</button>';
   });
-  html += '</div><div class="seg">';
+  html += '</div><div class="seg" style="margin-bottom:6px">';
   html += '<button class="seg__b" data-hunt="__savings">Savings Center</button>';
   html += '<button class="seg__b" data-hunt="clearance">All clearance</button>';
   html += '</div>';
+  html += '<div class="field" style="margin:0"><label class="field__l" for="f-scname">Shortcut name (must match exactly)</label>' +
+          '<input class="field__i" id="f-scname" placeholder="Send To Penny Run"></div>';
   $("sweeppick").innerHTML = html;
+  $("f-scname").value = state.shortcutName || "";
+  $("f-scname").addEventListener("change", function(){
+    state.shortcutName = this.value.trim();
+    save();
+  });
 }
 
 function handleHDShare(text){
@@ -2095,12 +2131,10 @@ $("sweepstart").addEventListener("click", function(){
 });
 
 $("sweeppick").addEventListener("click", function(e){
+  var mb = e.target.closest("[data-smode]");
+  if(mb){ sweepMode = mb.getAttribute("data-smode"); renderSweepPicker(); return; }
   var b = e.target.closest("[data-hunt]");
-  if(!b) return;
-  var q = b.getAttribute("data-hunt");
-  window.open(q === "__savings"
-    ? "https://www.homedepot.com/c/Savings_Center"
-    : "https://www.homedepot.com/s/" + encodeURIComponent(q), "_blank", "noopener");
+  if(b) runHunt(b.getAttribute("data-hunt"));
 });
 
 Array.prototype.forEach.call(document.querySelectorAll("[data-copy]"), function(b){
@@ -2216,7 +2250,8 @@ setMode("assess", null);
   try{
     if(/homedepot\.com/i.test(shared) ||
        /\$\s*\d|"price"|clearance|OUT_OF_STOCK|LIMITED_STOCK|BACKORDERED/i.test(shared) ||
-       /home improvement retailer|the home depot|shop all services/i.test(shared)){
+       /home improvement retailer|the home depot|shop all services/i.test(shared) ||
+       /\/p\/[A-Za-z0-9][\w%-]{6,}\/\d{6,}/.test(shared)){ /* bare product paths — a sweep harvest */
       handleHDShare(shared);
     } else {
       showRead("hold", "?", "Share arrived — no HD link in it", "Nothing to parse", "",
