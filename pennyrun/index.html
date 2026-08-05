@@ -332,6 +332,8 @@ input,select,textarea{font-family:inherit;font-size:16px}
   color:var(--mute);letter-spacing:.02em;
 }
 .storeitem__was{font-size:11.5px;color:var(--mute);font-weight:400}
+.qtyok{color:var(--go);font-weight:700}
+.qtyno{color:var(--stop);font-weight:700}
 .storeitem__off{
   font-family:var(--mono);font-size:11px;font-weight:800;white-space:nowrap;
   background:var(--stop);color:#fff;border-radius:5px;padding:2px 5px;
@@ -569,7 +571,7 @@ input,select,textarea{font-family:inherit;font-size:16px}
   <div class="flaglist is-on" data-f="go" id="flags-go"></div>
   <div class="flaglist" data-f="hold" id="flags-hold"></div>
   <div class="flaglist" data-f="stop" id="flags-stop"></div>
-  <p class="scan__hint" style="text-align:center;margin-top:16px">Penny Run · build v50</p>
+  <p class="scan__hint" style="text-align:center;margin-top:16px">Penny Run · build v51</p>
 </section>
 
 <!-- ============ ASSESSMENT SHEET ============ -->
@@ -1533,7 +1535,7 @@ function renderSweep(){
         ((CATALOG && CATALOG.stores_n) || "all") + " nearby stores") +
       (CATALOG && CATALOG.pool_n ? " · " + CATALOG.pool_n + " products swept" : "") +
       (CATALOG && CATALOG.harvested ? " " + CATALOG.harvested : "") +
-      ". Deepest markdown first.";
+      ". Deepest markdown first; empty shelves last.";
   } else {
     var flagged = list.filter(function(c){ return c.clear || c.oos; }).length;
     $("sweepsum").textContent = flagged
@@ -1552,12 +1554,17 @@ function renderSweep(){
     if(c.cat) html += '<span class="cattile">' + esc(shortCat(c.cat)) + '</span>';
     html +=   '<div style="flex:1;min-width:0"><b>' + esc(c.name.slice(0, 60)) + '</b>';
     if(c.price != null){
-      var extra = "";
-      if(c.qty != null) extra += " · " + c.qty + " in stock";
-      if(c.oos) extra += " · store only";
+      /* stock is that store's own count, not a neighbour's — a zero
+         here means the walk is probably wasted, so it reads red */
+      var qh = "";
+      if(c.qty != null){
+        qh = c.qty > 0
+          ? ' <span class="qtyok">' + c.qty + ' on shelf</span>'
+          : ' <span class="qtyno">none on shelf</span>';
+      }
       html +=   '<span class="storeitem__addr"><span class="storeitem__price">$' + c.price.toFixed(2) +
                 '</span> <span class="storeitem__was">was $' + (c.was || 0).toFixed(2) +
-                esc(extra) + '</span>';
+                (c.oos ? " · store only" : "") + '</span>' + qh;
       /* the clearance price is that store's only — say which, loudly */
       if(c.store) html += '<span class="atstore">@ ' + esc(storeName(c.store)) + '</span>';
       var ids = [];
@@ -1619,6 +1626,12 @@ function showCatalog(){
                price: r[3], was: r[4], pct: r[5], store: r[6] || null,
                qty: (r[7] == null ? null : r[7]), upc: r[10] || "",
                sku: r[11] || "", model: r[12] || "" };
+    });
+    /* deepest markdown first, but a shelf the store says is empty is a
+       wasted walk — those sink to the bottom rather than disappear */
+    sweepList.sort(function(a, b){
+      var az = a.qty === 0 ? 1 : 0, bz = b.qty === 0 ? 1 : 0;
+      return az !== bz ? az - bz : b.pct - a.pct;
     });
     sweepSource = "catalog";
     renderSweep();
@@ -2074,13 +2087,17 @@ function hdClearance(itemId, storeId){
     'identifiers { productLabel } pricing(storeId: "' + storeId + '", ' +
     'isBrandPricingPolicyCompliant: false) { value clearance { value percentageOff } } ' +
     'fulfillment(storeId: "' + storeId + '") { fulfillmentOptions { type fulfillable ' +
-    'services { type locations { storeName inventory { quantity isInStock } } } } } } }',
+    'services { type locations { locationId isAnchor storeName inventory { quantity isInStock } } } } } } }',
     { i: itemId }).then(function(d){ return (d && d.product) || null; });
 }
 
-/* how many that store actually has on the shelf, plus whether
-   pickup is blocked — the in-store-only signature */
-function stockAt(product){
+/* how many THAT store actually has on the shelf, plus whether
+   pickup is blocked — the in-store-only signature.
+   Home Depot returns several locations per product: your store plus
+   nearby ones that could fill the order. Only the anchor location is
+   yours, so match on isAnchor/locationId — taking whichever came last
+   reports a neighbouring store's pile as if it were on your shelf. */
+function stockAt(product, storeId){
   var out = { qty: null, storeOnly: false };
   var f = product && product.fulfillment;
   var opts = (f && f.fulfillmentOptions) || [];
@@ -2088,9 +2105,9 @@ function stockAt(product){
     if(o.type === "delivery" && o.fulfillable === false) out.storeOnly = true;
     (o.services || []).forEach(function(s){
       (s.locations || []).forEach(function(l){
-        if(o.type === "pickup" && l.inventory && l.inventory.quantity != null){
-          out.qty = l.inventory.quantity;
-        }
+        if(o.type !== "pickup") return;
+        if(!(l.isAnchor || (storeId && String(l.locationId) === String(storeId)))) return;
+        if(l.inventory && l.inventory.quantity != null) out.qty = l.inventory.quantity;
       });
     });
   });
