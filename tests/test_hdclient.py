@@ -103,3 +103,59 @@ def test_empty_errors_array_is_not_an_error(monkeypatch):
     got = hdclient.products(["204767783"], "2502")
     assert len(got) == 1
     assert got[0]["itemId"] == "204767783"
+
+
+class FakeGetResponse:
+    """A response as returned by hdclient._get() -- status, text, and headers."""
+    def __init__(self, status, text, headers=None):
+        self.status_code = status
+        self.text = text
+        self.headers = headers or {}
+
+
+def test_sitemap_200_challenge_page_raises_refused_not_returned_as_content(monkeypatch):
+    """Akamai answers a shard fetch with HTTP 200 and a JS challenge page.
+    Parsing that as if it were the sitemap makes a blocked slice look like
+    an empty one -- the exact silent-empty-result failure this rebuild
+    exists to eliminate."""
+    challenge = ('<!DOCTYPE html><html lang="en"><body>'
+                 '<script src="/1gD1TBGg/HSk/QFn?t=1"></script>'
+                 '<div id="sec-if-cpt-container">...</div></body></html>')
+    monkeypatch.setattr(hdclient, "_get", lambda *a, **k:
+                         FakeGetResponse(200, challenge, {"Content-Type": "text/html"}))
+    with pytest.raises(hdclient.Refused, match="not XML|non-XML|challenge"):
+        hdclient.sitemap("https://www.homedepot.com/sitemap/P/PIP-0.xml")
+
+
+def test_sitemap_real_xml_returned_unchanged(monkeypatch):
+    xml = ('<?xml version="1.0" encoding="UTF-8"?>'
+           '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+           '<url><loc>https://www.homedepot.com/p/x/204767783</loc></url>'
+           '</urlset>')
+    monkeypatch.setattr(hdclient, "_get", lambda *a, **k:
+                         FakeGetResponse(200, xml, {"Content-Type": "text/xml"}))
+    got = hdclient.sitemap("https://www.homedepot.com/sitemap/P/PIPs.xml")
+    assert got == xml
+
+
+def test_sitemap_index_markup_also_accepted(monkeypatch):
+    """The root sitemap is a <sitemapindex>, not a <urlset> -- both are real."""
+    xml = ('<?xml version="1.0" encoding="UTF-8"?>'
+           '<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+           '<sitemap><loc>https://www.homedepot.com/sitemap/P/PIP-0.xml</loc></sitemap>'
+           '</sitemapindex>')
+    monkeypatch.setattr(hdclient, "_get", lambda *a, **k:
+                         FakeGetResponse(200, xml, {"Content-Type": "text/xml"}))
+    got = hdclient.sitemap("https://www.homedepot.com/sitemap/P/PIPs.xml")
+    assert got == xml
+
+
+def test_sitemap_expect_xml_false_skips_the_content_check(monkeypatch):
+    """sitemap() also fetches plain HTML (search result pages via harvest() and
+    checkhost's probe). Those callers opt out of the XML check explicitly --
+    it isn't a sitemap and was never supposed to look like one."""
+    html = "<html><body><a href='/p/some-product-name/205606416'>x</a></body></html>"
+    monkeypatch.setattr(hdclient, "_get", lambda *a, **k:
+                         FakeGetResponse(200, html, {"Content-Type": "text/html"}))
+    got = hdclient.sitemap("https://www.homedepot.com/s/mulch%20clearance", expect_xml=False)
+    assert got == html

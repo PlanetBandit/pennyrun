@@ -85,14 +85,39 @@ def products(item_ids, store_id, lite=False, timeout=40):
     return [p for p in (data.get("products") or []) if p]
 
 
-def sitemap(url, timeout=60):
+# A challenge page answers with HTTP 200 too -- status alone can't tell it
+# apart from the sitemap XML it's standing in for. Sniff the body instead of
+# trusting the status code, the same way products() stopped trusting a 200
+# to mean "JSON".
+_XML_MARKERS = ("<sitemapindex", "<urlset", "<loc")
+
+
+def sitemap(url, timeout=60, expect_xml=True):
+    """Fetch a URL as text. When expect_xml is true (the default, used for
+    the sitemap index and its shards) a 200 that isn't actually XML --
+    Akamai's interstitial included -- raises Refused instead of being
+    handed back as if it were the sitemap. Callers that use this for plain
+    HTML on purpose (harvest()'s search pages, the probe's search check)
+    pass expect_xml=False."""
     try:
         r = _get(url, timeout)
     except Exception as e:
         raise Unreachable(f"{type(e).__name__}: {e}") from e
     if r.status_code != 200:
         raise Refused(f"HTTP {r.status_code}")
-    return r.text
+    body = r.text
+    if expect_xml:
+        content_type = ""
+        try:
+            content_type = (r.headers.get("Content-Type") or "").lower()
+        except Exception:
+            pass
+        looks_like_xml = any(marker in body[:2000].lower() for marker in _XML_MARKERS)
+        if not looks_like_xml or "text/html" in content_type:
+            raise Refused(
+                f"200 with a non-XML body (content-type {content_type or 'unknown'}) -- "
+                f"a challenge/interstitial page, not a sitemap: {body[:160]!r}")
+    return body
 
 
 def probe():
@@ -106,10 +131,12 @@ def probe():
     except Unreachable as e:
         out["pricing API"] = f"unreachable: {e}"
 
-    for name, url in [("sitemap", f"{SITEMAP_HOST}/sitemap/P/PIPs.xml"),
-                      ("search page", f"{SITEMAP_HOST}/s/mulch%20clearance")]:
+    for name, url, expect_xml in [
+        ("sitemap", f"{SITEMAP_HOST}/sitemap/P/PIPs.xml", True),
+        ("search page", f"{SITEMAP_HOST}/s/mulch%20clearance", False),
+    ]:
         try:
-            sitemap(url, timeout=30)
+            sitemap(url, timeout=30, expect_xml=expect_xml)
             out[name] = "ok"
         except Refused as e:
             out[name] = f"refused: {e}"

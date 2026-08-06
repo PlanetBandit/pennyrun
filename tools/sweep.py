@@ -33,15 +33,15 @@ showing up. Run them in that order:
 """
 
 import datetime
-import gzip
 import json
 import os
 import re
 import sys
 import time
 import urllib.parse
-import urllib.request
 from concurrent.futures import ThreadPoolExecutor
+
+from tools import hdclient
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -63,12 +63,11 @@ OUT = os.environ.get("PENNYRUN_OUT") or os.path.join(ROOT, "pennyrun", "clearanc
 
 STORES = os.environ.get("PENNYRUN_STORES") or os.path.join(HERE, "stores.json")
 
-API = "https://apionline.homedepot.com/federation-gateway/graphql"
-SITEMAP = "https://www.homedepot.com/sitemap/P/PIPs.xml"
-UA = ("Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 "
-      "(KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1")
+# tools/hdclient.py is the only module that hardcodes a Home Depot host --
+# everything here that needs one asks it for the host rather than repeating it.
+SITEMAP = hdclient.SITEMAP_HOST + "/sitemap/P/PIPs.xml"
 
-BATCH = 16          # the cap the products() query enforces on itemIds
+BATCH = hdclient.BATCH  # the cap the products() query enforces on itemIds
 WORKERS = 20        # measured clean to 40; 20 leaves headroom and stays polite
 PAGES = [0, 24, 48, 72]
 
@@ -143,60 +142,57 @@ LOC = re.compile(r"<loc>([^<]+)</loc>")
 
 # --------------------------------------------------------------- the API
 
-Q = ('query q($ids: [String!]!) { products(itemIds: $ids) { itemId '
-     'identifiers { productLabel canonicalUrl upc storeSkuNumber modelNumber } '
-     'availabilityType { type } '
-     'info { replacementOMSID } '
-     'pricing(storeId: "%s", isBrandPricingPolicyCompliant: false) '
-     '{ value clearance { value dollarOff percentageOff } } '
-     'fulfillment(storeId: "%s") { fulfillmentOptions { type fulfillable '
-     'services { locations { locationId isAnchor inventory { quantity } } } } } } }')
-
-# Discovery only needs to know whether a clearance price exists at all.
-QLITE = ('query q($ids: [String!]!) { products(itemIds: $ids) { itemId '
-         'identifiers { productLabel } taxonomy { breadCrumbs { label } } '
-         'pricing(storeId: "%s", isBrandPricingPolicyCompliant: false) '
-         '{ clearance { value } } } }')
+def call(ids, sid, lite=False):
+    """Kept for call-site compatibility. Refusals now surface instead of
+    turning into an empty list that reads as 'nothing on clearance'."""
+    return hdclient.products(ids, sid, lite=lite)
 
 
-def call(query, ids, sid, tries=3):
-    body = json.dumps({"operationName": "q", "variables": {"ids": ids},
-                       "query": query % ((sid, sid) if query is Q else sid)}).encode()
-    req = urllib.request.Request(API, data=body, headers={
-        "Content-Type": "application/json",
-        "x-experience-name": "general-merchandise", "User-Agent": UA})
-    for attempt in range(tries):
-        try:
-            with urllib.request.urlopen(req, timeout=40) as r:
-                d = json.loads(r.read().decode("utf-8", "replace"))
-                return [p for p in ((d.get("data") or {}).get("products") or []) if p]
-        except Exception:
-            if attempt == tries - 1:
-                return []
-            time.sleep(1.0 + attempt)
-    return []
+def get(url, timeout=60, expect_xml=True):
+    """expect_xml=True (the default, used for the sitemap in discover()) makes
+    a 200 whose body isn't actually XML -- an Akamai challenge page included
+    -- raise instead of being parsed as an empty sitemap. harvest() fetches
+    plain HTML search pages on purpose and passes expect_xml=False."""
+    return hdclient.sitemap(url, timeout=timeout, expect_xml=expect_xml)
 
 
 def in_batches(ids, fn):
-    """Run fn over every batch of ids concurrently and flatten the results."""
-    chunks = [ids[i:i + BATCH] for i in range(0, len(ids), BATCH)]
-    out = []
+    """Run fn over every batch of ids concurrently and flatten the results.
+
+    Real sitemap slices can repeat an id across shards, and hdclient.products()
+    rejects a whole batch outright if it contains a duplicate -- so ids are
+    de-duplicated here before chunking, once, up front.
+
+    A batch that gets refused no longer disappears into an empty list the way
+    the old call() made it look: refusals are counted and returned alongside
+    the hits, so a fully-refused run is visibly a wall, not a night with
+    nothing on clearance. One refused chunk still doesn't abort the rest --
+    these are thousands of chunks and Home Depot's block is applied per
+    connection, not per id, so pressing on and reporting the count is more
+    useful than stopping at the first one.
+    """
+    seen, deduped = set(), []
+    for i in ids:
+        if i not in seen:
+            seen.add(i)
+            deduped.append(i)
+    chunks = [deduped[i:i + BATCH] for i in range(0, len(deduped), BATCH)]
+
+    out, refused = [], 0
+
+    def safe(chunk):
+        try:
+            return fn(chunk)
+        except (hdclient.Refused, hdclient.Unreachable):
+            return None
+
     with ThreadPoolExecutor(max_workers=WORKERS) as ex:
-        for got in ex.map(fn, chunks):
-            out += got
-    return out
-
-
-def get(url, timeout=60):
-    req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept-Encoding": "gzip"})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        data = r.read()
-        if r.headers.get("Content-Encoding") == "gzip" or url.endswith(".gz"):
-            try:
-                data = gzip.decompress(data)
-            except Exception:
-                pass
-        return data.decode("utf-8", "replace")
+        for got in ex.map(safe, chunks):
+            if got is None:
+                refused += 1
+            else:
+                out += got
+    return out, refused, len(chunks)
 
 
 # ---------------------------------------------------------------- harvest
@@ -208,10 +204,10 @@ def harvest():
 
     def fetch(job):
         cat, q, nao = job
-        url = ("https://www.homedepot.com/s/" + urllib.parse.quote(q)
+        url = (hdclient.SITEMAP_HOST + "/s/" + urllib.parse.quote(q)
                + "?Nao=%d&hv=%d" % (nao, int(time.time())))
         try:
-            html = get(url, timeout=35)
+            html = get(url, timeout=35, expect_xml=False)
         except Exception:
             return []
         out = []
@@ -265,7 +261,15 @@ def discover():
     shard = cur.get("shard", 0) % len(shards)
     offset = cur.get("offset", 0)
 
-    urls = LOC.findall(get(shards[shard], timeout=120))
+    # A shard fetch can itself be challenged even when the index just above
+    # answered fine -- catch that here rather than let it crash the run or,
+    # worse, let a challenge page's empty <loc> count read as an empty shard.
+    try:
+        shard_body = get(shards[shard], timeout=120)
+    except Exception as e:
+        die("discover: shard %d was refused (%s). Home Depot challenged this "
+            "request -- the catalogue slice is not actually empty." % (shard, e))
+    urls = LOC.findall(shard_body)
     ids = [m.group(1) for m in
            (re.search(r"/(\d{6,})/?$", u) for u in urls) if m]
     if not ids:
@@ -280,7 +284,7 @@ def discover():
 
     def work(chunk):
         found = []
-        for p in call(QLITE, chunk, sid):
+        for p in call(chunk, sid, lite=True):
             label = (p.get("identifiers") or {}).get("productLabel") or ""
             if label:
                 names[p["itemId"]] = (label, crumb(p))
@@ -290,7 +294,10 @@ def discover():
         return found
 
     t0 = time.time()
-    found = in_batches(window, work)
+    found, refused, total = in_batches(window, work)
+    if refused:
+        say("discover: %d of %d chunks refused -- this run is incomplete, not empty"
+            % (refused, total))
     say("discover: %d on clearance out of %d priced in %.1f min"
         % (len(found), len(window), (time.time() - t0) / 60))
 
@@ -364,7 +371,7 @@ def row(p, sid, meta, before):
 
     # markdowns cascade, so what it cost yesterday is the strongest lead there
     # is: a price that moved last night is a price still on its way down
-    prev = before.get((p["itemId"], sid))
+    prev = before.get(p["itemId"] + "@" + sid)
     dropped = round(prev, 2) if prev is not None and prev > value + 0.004 else None
 
     return [(ident.get("productLabel") or m[0])[:78], p["itemId"], m[1],
@@ -392,10 +399,14 @@ def scan():
     hits, t0 = [], time.time()
     for sid, name in stores:
         s0 = time.time()
-        got = in_batches(ids, lambda chunk, s=sid:
-                         [r for r in (row(p, s, meta, before) for p in call(Q, chunk, s)) if r])
+        got, refused, total = in_batches(ids, lambda chunk, s=sid:
+                         [r for r in (row(p, s, meta, before) for p in call(chunk, s)) if r])
         hits += got
-        say("  %-16s %4d hits in %5.1fs" % (name, len(got), time.time() - s0))
+        if refused:
+            say("  %-16s %4d hits in %5.1fs  (%d/%d chunks refused)"
+                % (name, len(got), time.time() - s0, refused, total))
+        else:
+            say("  %-16s %4d hits in %5.1fs" % (name, len(got), time.time() - s0))
 
     if not hits:
         die("scan came back empty -- leaving the list already on file alone")
@@ -474,7 +485,8 @@ def previous_hits():
 
 
 def previous_prices():
-    """{(itemId, storeId): clearance price} from the sweep before this one.
+    """{"itemId@storeId": clearance price} from the sweep before this one,
+    the same key shape save_prices() writes.
 
     Kept in its own ledger rather than read back out of clearance.json,
     because that file only ships the deepest few thousand rows and a price
@@ -482,9 +494,8 @@ def previous_prices():
     when it drops again."""
     out = {}
     for key, price in read(PRICES, {}).items():
-        pid, _, sid = key.partition("@")
         try:
-            out[(pid, sid)] = float(price)
+            out[key] = float(price)
         except Exception:
             pass
     return out
@@ -537,54 +548,9 @@ def probe():
     """Say exactly what each host does when we knock, with no retries and no
        swallowed exceptions. The scan hides failures behind empty results on
        purpose -- this is the stage that refuses to."""
-    body = json.dumps({"operationName": "q", "variables": {"ids": ["205606416"]},
-                       "query": QLITE % "2577"}).encode()
-    checks = [
-        ("pricing API", urllib.request.Request(API, data=body, headers={
-            "Content-Type": "application/json",
-            "x-experience-name": "general-merchandise", "User-Agent": UA})),
-        ("sitemap", urllib.request.Request(SITEMAP, headers={"User-Agent": UA})),
-        ("search page", urllib.request.Request(
-            "https://www.homedepot.com/s/mulch%20clearance", headers={"User-Agent": UA})),
-    ]
-    # A datacentre IP and a missing header look identical from the outside:
-    # both come back 206 with "Generic Errors API". Try the variants a real
-    # app sends so the answer is measured rather than assumed.
-    for label, extra in [
-        ("+ origin/referer", {"Origin": "https://www.homedepot.com",
-                              "Referer": "https://www.homedepot.com/"}),
-        ("+ desktop UA", {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                          "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36"}),
-        ("+ apollo hdrs", {"apollographql-client-name": "general-merchandise",
-                           "apollographql-client-version": "0.0.0",
-                           "x-hd-dc": "origin", "Accept": "*/*"}),
-    ]:
-        h = {"Content-Type": "application/json",
-             "x-experience-name": "general-merchandise", "User-Agent": UA}
-        h.update(extra)
-        try:
-            with urllib.request.urlopen(
-                    urllib.request.Request(API, data=body, headers=h), timeout=30) as r:
-                say("  api %-16s HTTP %s  %s" % (label, r.status,
-                    r.read(150).decode("utf-8", "replace").replace("\n", " ")))
-        except Exception as e:
-            say("  api %-16s FAILED  %s" % (label, e))
-
-    bad = 0
-    for name, req in checks:
-        try:
-            with urllib.request.urlopen(req, timeout=30) as r:
-                text = r.read(400).decode("utf-8", "replace").replace("\n", " ")
-                say("  %-12s HTTP %s  %s" % (name, r.status, text[:220]))
-        except urllib.error.HTTPError as e:
-            bad += 1
-            say("  %-12s HTTP %s  %s" % (name, e.code,
-                                         e.read(220).decode("utf-8", "replace").replace("\n", " ")))
-        except Exception as e:
-            bad += 1
-            say("  %-12s FAILED  %s" % (name, e))
-    if bad:
-        die("%d of %d hosts refused us from this machine" % (bad, len(checks)))
+    from tools import checkhost
+    if checkhost.main() != 0:
+        die("this machine cannot run the sweep")
 
 
 STAGES = {"harvest": harvest, "discover": discover, "scan": scan, "probe": probe}
