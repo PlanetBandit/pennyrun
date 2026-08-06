@@ -70,9 +70,16 @@ def products(item_ids, store_id, lite=False, timeout=40):
     if r.status_code != 200:
         raise Refused(f"HTTP {r.status_code}: {r.text[:160]}")
 
-    body = r.json()
-    if body.get("errors"):
-        raise Refused(body["errors"][0].get("message", "graphql error"))
+    try:
+        body = r.json()
+    except Exception as e:
+        raise Refused(f"non-JSON 200 body ({type(e).__name__}): {r.text[:160]}") from e
+
+    errors = body.get("errors")
+    if errors:
+        first = errors[0]
+        message = first.get("message", "graphql error") if isinstance(first, dict) else str(first)
+        raise Refused(message)
 
     data = body.get("data") or {}
     return [p for p in (data.get("products") or []) if p]

@@ -16,6 +16,16 @@ class FakeResponse:
         return self._payload
 
 
+class FakeNonJSONResponse:
+    """A 200 whose body is HTML (an interstitial/challenge page), not JSON."""
+    def __init__(self, html):
+        self.status_code = 200
+        self.text = html
+
+    def json(self):
+        raise ValueError("Expecting value: line 1 column 1 (char 0)")
+
+
 def test_uses_the_measured_profile():
     assert hdclient.PROFILE == "safari17_0"
 
@@ -69,3 +79,27 @@ def test_graphql_errors_raise(monkeypatch):
     monkeypatch.setattr(hdclient, "_post", lambda *a, **k: FakeResponse(200, body))
     with pytest.raises(hdclient.Refused, match="duplicates"):
         hdclient.products(["1"], "2502")
+
+
+def test_200_with_non_json_body_raises_refused(monkeypatch):
+    """An anti-bot interstitial can be served with HTTP 200 and an HTML body."""
+    monkeypatch.setattr(hdclient, "_post",
+                         lambda *a, **k: FakeNonJSONResponse("<html>are you a robot?</html>"))
+    with pytest.raises(hdclient.Refused, match="non-JSON"):
+        hdclient.products(["1"], "2502")
+
+
+def test_bare_string_graphql_error_raises_refused_not_attributeerror(monkeypatch):
+    body = {"errors": ["a bare string"], "data": {"products": None}}
+    monkeypatch.setattr(hdclient, "_post", lambda *a, **k: FakeResponse(200, body))
+    with pytest.raises(hdclient.Refused):
+        hdclient.products(["1"], "2502")
+
+
+def test_empty_errors_array_is_not_an_error(monkeypatch):
+    payload = json.loads((FIX / "products_ok.json").read_text())
+    payload["errors"] = []
+    monkeypatch.setattr(hdclient, "_post", lambda *a, **k: FakeResponse(200, payload))
+    got = hdclient.products(["204767783"], "2502")
+    assert len(got) == 1
+    assert got[0]["itemId"] == "204767783"
