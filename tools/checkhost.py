@@ -20,26 +20,28 @@ def verdict(results):
     if pricing == "ok":
         return 0, "GOOD -- Home Depot quotes prices from this machine."
 
-    if pricing.startswith("unreachable"):
-        return 2, ("UNKNOWN -- could not reach Home Depot at all.\n"
-                   "     This is a local network or TLS problem, not a refusal.\n"
-                   "     On macOS this is usually Python missing root certificates:\n"
-                   "     run /Applications/Python*/Install\\ Certificates.command\n"
+    if pricing.startswith("refused"):
+        return 1, ("BLOCKED -- they answered and refused this address.\n"
+                   "     datacentre ranges (GitHub Actions, DigitalOcean) get 206 no\n"
+                   "     matter what the client looks like -- measured six impersonation\n"
+                   "     profiles, all refused. Run the sweep from a residential\n"
+                   "     connection instead.\n"
                    f"     detail: {pricing}")
 
-    return 1, ("BLOCKED -- they answered and refused this address.\n"
-               "     datacentre ranges (GitHub Actions, DigitalOcean) get 206 no\n"
-               "     matter what the client looks like -- measured six impersonation\n"
-               "     profiles, all refused. Run the sweep from a residential\n"
-               "     connection instead.\n"
+    return 2, ("UNKNOWN -- could not reach Home Depot or received an unexpected state.\n"
+               "     This is likely a local network or TLS problem, not a refusal.\n"
+               "     On macOS this is usually Python missing root certificates:\n"
+               "     run /Applications/Python*/Install\\ Certificates.command\n"
+               "     If you see this on a different platform, check network connectivity.\n"
                f"     detail: {pricing}")
 
 
 def main():
     results = hdclient.probe()
-    width = max(len(k) for k in results)
-    for host, state in results.items():
-        print(f"  {host:<{width}}  {state}")
+    if results:
+        width = max(len(k) for k in results)
+        for host, state in results.items():
+            print(f"  {host:<{width}}  {state}")
     print()
     code, msg = verdict(results)
     print(msg)

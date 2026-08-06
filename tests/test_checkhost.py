@@ -1,3 +1,4 @@
+from unittest.mock import patch
 from tools import checkhost
 
 
@@ -30,3 +31,36 @@ def test_unreachable_is_not_blocked():
     assert code == 2
     assert "BLOCKED" not in msg
     assert "could not reach" in msg.lower()
+
+
+def test_missing_pricing_key_is_unknown():
+    """If 'pricing API' key is missing, we don't know what happened."""
+    code, msg = checkhost.verdict({"sitemap": "ok", "search page": "ok"})
+    assert code == 2
+    assert "UNKNOWN" in msg
+    assert "BLOCKED" not in msg
+
+
+def test_unrecognized_pricing_value_is_unknown():
+    """An unrecognized value from hdclient means we don't understand the state."""
+    code, msg = checkhost.verdict(
+        {"pricing API": "weird new state", "sitemap": "ok", "search page": "ok"})
+    assert code == 2
+    assert "UNKNOWN" in msg
+    assert "BLOCKED" not in msg
+
+
+def test_refused_still_blocked():
+    """Regression guard: 'refused' prefix must still produce BLOCKED (exit 1)."""
+    code, msg = checkhost.verdict(
+        {"pricing API": "refused: HTTP 206", "sitemap": "ok", "search page": "ok"})
+    assert code == 1
+    assert "BLOCKED" in msg
+
+
+def test_main_with_empty_results():
+    """main() should not crash if probe() returns empty dict."""
+    with patch("tools.checkhost.hdclient.probe") as mock_probe:
+        mock_probe.return_value = {}
+        code = checkhost.main()
+        assert code == 2  # Empty dict should result in UNKNOWN
