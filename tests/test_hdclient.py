@@ -150,6 +150,21 @@ def test_sitemap_index_markup_also_accepted(monkeypatch):
     assert got == xml
 
 
+def test_sitemap_valid_xml_with_mislabeled_html_content_type_is_accepted(monkeypatch):
+    """CDN/Akamai edges routinely serve a real .xml object with
+    Content-Type: text/html. The body sniff is what matters -- gating on
+    Content-Type too would refuse a genuine sitemap over a header, not its
+    content, and that's a false refusal discover() would now die on."""
+    xml = ('<?xml version="1.0" encoding="UTF-8"?>'
+           '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+           '<url><loc>https://www.homedepot.com/p/x/204767783</loc></url>'
+           '</urlset>')
+    monkeypatch.setattr(hdclient, "_get", lambda *a, **k:
+                         FakeGetResponse(200, xml, {"Content-Type": "text/html"}))
+    got = hdclient.sitemap("https://www.homedepot.com/sitemap/P/PIPs.xml")
+    assert got == xml
+
+
 def test_sitemap_expect_xml_false_skips_the_content_check(monkeypatch):
     """sitemap() also fetches plain HTML (search result pages via harvest() and
     checkhost's probe). Those callers opt out of the XML check explicitly --

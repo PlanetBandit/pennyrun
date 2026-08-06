@@ -107,13 +107,17 @@ def sitemap(url, timeout=60, expect_xml=True):
         raise Refused(f"HTTP {r.status_code}")
     body = r.text
     if expect_xml:
-        content_type = ""
-        try:
-            content_type = (r.headers.get("Content-Type") or "").lower()
-        except Exception:
-            pass
+        # The body sniff is the signal that matters. Content-Type is not: CDN
+        # and Akamai edges routinely mislabel a real .xml object as
+        # text/html, and gating on that too would refuse a genuine sitemap
+        # for a header, not for its content.
         looks_like_xml = any(marker in body[:2000].lower() for marker in _XML_MARKERS)
-        if not looks_like_xml or "text/html" in content_type:
+        if not looks_like_xml:
+            content_type = ""
+            try:
+                content_type = (r.headers.get("Content-Type") or "").lower()
+            except Exception:
+                pass
             raise Refused(
                 f"200 with a non-XML body (content-type {content_type or 'unknown'}) -- "
                 f"a challenge/interstitial page, not a sitemap: {body[:160]!r}")

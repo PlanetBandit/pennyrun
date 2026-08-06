@@ -9,7 +9,15 @@ Three outcomes, deliberately distinct:
 Exit 2 used to be reported as BLOCKED, which sent one investigation down
 the wrong road entirely.
 """
+import os
 import sys
+
+# `python3 tools/checkhost.py` puts tools/ on sys.path, not the repo root,
+# so `from tools import hdclient` can't resolve on its own -- see sweep.py
+# for the same fix and the reasoning.
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
 
 from tools import hdclient
 

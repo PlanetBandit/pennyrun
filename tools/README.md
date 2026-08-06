@@ -24,9 +24,9 @@ more than can be priced at eight stores in a night. Hence three stages.
 ## The three stages
 
 ```bash
-python3 tools/sweep.py harvest    # tools/pool.json          (weekly)
-python3 tools/sweep.py discover   # tools/hot.json           (nightly)
-python3 tools/sweep.py scan       # pennyrun/clearance.json  (nightly)
+python3 -m tools.sweep harvest    # tools/pool.json          (weekly)
+python3 -m tools.sweep discover   # tools/hot.json           (nightly)
+python3 -m tools.sweep scan       # pennyrun/clearance.json  (nightly)
 ```
 
 **harvest** scrapes product ids out of Home Depot's clearance search

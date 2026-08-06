@@ -28,8 +28,8 @@ Discovery is broad and shallow, verification is narrow and deep, and
 anything ever found on clearance keeps getting checked until it stops
 showing up. Run them in that order:
 
-  python3 tools/sweep.py discover scan
-  python3 tools/sweep.py harvest discover scan
+  python3 -m tools.sweep discover scan
+  python3 -m tools.sweep harvest discover scan
 """
 
 import datetime
@@ -39,12 +39,22 @@ import re
 import sys
 import time
 import urllib.parse
+from collections import namedtuple
 from concurrent.futures import ThreadPoolExecutor
-
-from tools import hdclient
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
+
+# `python3 tools/sweep.py ...` puts tools/ on sys.path, not the repo root, so
+# `from tools import hdclient` can't resolve -- Python never adds the parent
+# of the script's own directory. `python3 -m tools.sweep` doesn't have this
+# problem (that's the documented invocation below), but the direct form is
+# what every existing caller -- the workflow, the systemd units, muscle
+# memory -- actually runs, so make it work too rather than break them all.
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
+
+from tools import hdclient
 
 # On a server the checkout has to stay pristine or every deploy turns into
 # a merge conflict with last night's sweep. Point PENNYRUN_DATA somewhere
@@ -70,6 +80,17 @@ SITEMAP = hdclient.SITEMAP_HOST + "/sitemap/P/PIPs.xml"
 BATCH = hdclient.BATCH  # the cap the products() query enforces on itemIds
 WORKERS = 20        # measured clean to 40; 20 leaves headroom and stays polite
 PAGES = [0, 24, 48, 72]
+
+# A discover() slice where at least this fraction of chunks came back refused
+# or unreachable isn't a real result -- it's Home Depot declining to answer,
+# shaped like an empty catalogue. Below this, a handful of bad chunks in a
+# slice of thousands is normal and the run is still trusted. At or above it,
+# discover() dies before writing HOT or advancing CURSOR: a slice that was
+# mostly never priced must be priced again, not marked done and skipped for
+# weeks. (scan()'s analogous guard compares total hits to the last run's;
+# discover() has no "last run" to compare a single slice against, so this
+# looks at the run's own chunks instead.)
+DISCOVER_ABORT_THRESHOLD = 0.5
 
 # How much of the catalogue to price per discover run. Measured at roughly
 # 330 products/sec here, so 60k is a few minutes locally and under fifteen on
@@ -156,6 +177,13 @@ def get(url, timeout=60, expect_xml=True):
     return hdclient.sitemap(url, timeout=timeout, expect_xml=expect_xml)
 
 
+# "They answered and said no" and "we never got an answer" call for different
+# responses at 5am -- keep them apart rather than folding both into one count.
+BatchRun = namedtuple(
+    "BatchRun",
+    "out refused unreachable chunks priced first_refused first_unreachable")
+
+
 def in_batches(ids, fn):
     """Run fn over every batch of ids concurrently and flatten the results.
 
@@ -163,13 +191,16 @@ def in_batches(ids, fn):
     rejects a whole batch outright if it contains a duplicate -- so ids are
     de-duplicated here before chunking, once, up front.
 
-    A batch that gets refused no longer disappears into an empty list the way
-    the old call() made it look: refusals are counted and returned alongside
+    A batch that gets refused or is simply unreachable no longer disappears
+    into an empty list the way the old call() made it look: both are counted
+    separately (plus the first message seen for each) and returned alongside
     the hits, so a fully-refused run is visibly a wall, not a night with
-    nothing on clearance. One refused chunk still doesn't abort the rest --
-    these are thousands of chunks and Home Depot's block is applied per
-    connection, not per id, so pressing on and reporting the count is more
-    useful than stopping at the first one.
+    nothing on clearance -- and "they said no" is never confused with "we
+    never got an answer". One bad chunk still doesn't abort the rest -- these
+    can be thousands of chunks and Home Depot's block is applied per
+    connection, not per id, so pressing on and reporting the counts is more
+    useful than stopping at the first one. Callers that need to distrust a
+    mostly-bad run decide that themselves from the counts returned here.
     """
     seen, deduped = set(), []
     for i in ids:
@@ -178,21 +209,30 @@ def in_batches(ids, fn):
             deduped.append(i)
     chunks = [deduped[i:i + BATCH] for i in range(0, len(deduped), BATCH)]
 
-    out, refused = [], 0
-
     def safe(chunk):
         try:
-            return fn(chunk)
-        except (hdclient.Refused, hdclient.Unreachable):
-            return None
+            return "ok", fn(chunk), len(chunk)
+        except hdclient.Refused as e:
+            return "refused", str(e), len(chunk)
+        except hdclient.Unreachable as e:
+            return "unreachable", str(e), len(chunk)
 
+    out, refused, unreachable, priced = [], 0, 0, 0
+    first_refused, first_unreachable = None, None
     with ThreadPoolExecutor(max_workers=WORKERS) as ex:
-        for got in ex.map(safe, chunks):
-            if got is None:
+        for kind, payload, n in ex.map(safe, chunks):
+            if kind == "ok":
+                out += payload
+                priced += n
+            elif kind == "refused":
                 refused += 1
+                first_refused = first_refused or payload
             else:
-                out += got
-    return out, refused, len(chunks)
+                unreachable += 1
+                first_unreachable = first_unreachable or payload
+
+    return BatchRun(out, refused, unreachable, len(chunks), priced,
+                     first_refused, first_unreachable)
 
 
 # ---------------------------------------------------------------- harvest
@@ -294,15 +334,33 @@ def discover():
         return found
 
     t0 = time.time()
-    found, refused, total = in_batches(window, work)
-    if refused:
-        say("discover: %d of %d chunks refused -- this run is incomplete, not empty"
-            % (refused, total))
+    run = in_batches(window, work)
+    bad = run.refused + run.unreachable
+
+    # Gate on refusal BEFORE any state write. A total (or near-total) refusal
+    # must not age hot-list entries out and must not advance the cursor past
+    # a slice that was never actually priced -- at the real SLICE size that's
+    # tens of thousands of products burned for weeks, not an empty night.
+    if run.chunks and bad / run.chunks >= DISCOVER_ABORT_THRESHOLD:
+        detail = ""
+        if run.first_refused:
+            detail += "\n  refused: %s" % run.first_refused
+        if run.first_unreachable:
+            detail += "\n  unreachable: %s" % run.first_unreachable
+        die("discover: %d/%d chunks refused, %d/%d unreachable (%.0f%% of the slice, at or "
+            "above the %.0f%% abort threshold) -- Home Depot is blocking this run, not "
+            "returning an empty slice. Leaving the hot list and cursor untouched.%s"
+            % (run.refused, run.chunks, run.unreachable, run.chunks,
+               100 * bad / run.chunks, 100 * DISCOVER_ABORT_THRESHOLD, detail))
+
+    if bad:
+        say("discover: %d of %d chunks refused, %d unreachable -- this run is partial, not empty"
+            % (run.refused, run.chunks, run.unreachable))
     say("discover: %d on clearance out of %d priced in %.1f min"
-        % (len(found), len(window), (time.time() - t0) / 60))
+        % (len(run.out), run.priced, (time.time() - t0) / 60))
 
     hot = read(HOT, {})
-    for pid in found:
+    for pid in run.out:
         label, cat = names.get(pid, ("", ""))
         prev = hot.get(pid) or {}
         hot[pid] = {"name": label or prev.get("name", ""),
@@ -399,14 +457,14 @@ def scan():
     hits, t0 = [], time.time()
     for sid, name in stores:
         s0 = time.time()
-        got, refused, total = in_batches(ids, lambda chunk, s=sid:
+        run = in_batches(ids, lambda chunk, s=sid:
                          [r for r in (row(p, s, meta, before) for p in call(chunk, s)) if r])
-        hits += got
-        if refused:
-            say("  %-16s %4d hits in %5.1fs  (%d/%d chunks refused)"
-                % (name, len(got), time.time() - s0, refused, total))
+        hits += run.out
+        if run.refused or run.unreachable:
+            say("  %-16s %4d hits in %5.1fs  (%d/%d chunks refused, %d unreachable)"
+                % (name, len(run.out), time.time() - s0, run.refused, run.chunks, run.unreachable))
         else:
-            say("  %-16s %4d hits in %5.1fs" % (name, len(got), time.time() - s0))
+            say("  %-16s %4d hits in %5.1fs" % (name, len(run.out), time.time() - s0))
 
     if not hits:
         die("scan came back empty -- leaving the list already on file alone")
@@ -551,6 +609,16 @@ def probe():
     from tools import checkhost
     if checkhost.main() != 0:
         die("this machine cannot run the sweep")
+
+    # checkhost's exit code is 0 as soon as the pricing gateway answers --
+    # scan doesn't need anything else. But discover() also needs the sitemap
+    # host, which checkhost.verdict() never looks at, so a blocked sitemap
+    # passes probe silently otherwise. Warn, don't die: scan must still run.
+    sitemap_state = hdclient.probe().get("sitemap", "")
+    if sitemap_state and sitemap_state != "ok":
+        say("WARNING: sitemap host is %s -- discover() will not be able to walk "
+            "the catalogue from this machine right now. scan() is unaffected."
+            % sitemap_state)
 
 
 STAGES = {"harvest": harvest, "discover": discover, "scan": scan, "probe": probe}
