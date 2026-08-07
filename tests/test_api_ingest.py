@@ -1,3 +1,4 @@
+import json
 import os
 
 import pytest
@@ -187,3 +188,117 @@ def test_a_resent_batch_is_not_deduplicated(client, fresh_conn):
 
     after = _observation_count(fresh_conn)
     assert after - before == 2, "a retried batch inserts again; it is not deduped"
+
+
+# --- Review round 1 -----------------------------------------------------
+#
+# Critical 1: `validate.check` used to leak `InvalidOperation` (NaN
+# comparisons) and `TypeError` (`int([])`) past its `ValueError`
+# contract, and `discovery()` only caught `ValueError` -- so one bad row
+# 500'd the whole request. Task 9's collector has no retry, so a 500 here
+# costs an entire chunk, not one row. Fixed at both ends: `validate.py`
+# rejects non-finite `Decimal`s and non-scalar quantities as `ValueError`
+# at the source, and `discovery()`'s catch is broadened as defense in
+# depth. A malformed envelope (`observations` not a list) is a 400, not
+# a fall-through to `AttributeError` -> 500.
+
+
+def test_nan_clearance_price_is_rejected_not_500(client):
+    # httpx's own `json=` convenience encoder refuses to serialize NaN
+    # (`allow_nan=False`) -- stricter than what actually reaches the
+    # server. stdlib `json.dumps` (`allow_nan=True`, the default) is what
+    # Starlette's request parser uses, and what a real client sending a
+    # bare `NaN` token would produce, so the raw body is built with it
+    # directly rather than going through httpx's `json=` shortcut.
+    body = {"observations": [
+        BODY["observations"][0],
+        {"item_id": "204767783", "store_id": "2502", "clearance_price": float("nan")}]}
+    r = client.post("/api/v1/discovery", content=json.dumps(body),
+                    headers={"Authorization": f"Bearer {TOKEN}",
+                             "Content-Type": "application/json"})
+    assert r.status_code == 200
+    assert r.json() == {"accepted": 1, "rejected": 1}
+
+
+def test_non_scalar_quantity_is_rejected_not_500(client):
+    body = {"observations": [
+        BODY["observations"][0],
+        {"item_id": "204767783", "store_id": "2502", "clearance_price": "1.00", "quantity": []}]}
+    r = client.post("/api/v1/discovery", json=body,
+                    headers={"Authorization": f"Bearer {TOKEN}"})
+    assert r.status_code == 200
+    assert r.json() == {"accepted": 1, "rejected": 1}
+
+
+def test_malformed_envelope_is_400_not_500(client):
+    r = client.post("/api/v1/discovery", json={"observations": "abc"},
+                    headers={"Authorization": f"Bearer {TOKEN}"})
+    assert r.status_code == 400
+
+
+# --- Review round 1 -----------------------------------------------------
+#
+# Important 1: Starlette decodes headers as latin-1, so any header byte
+# above 0x7F produces a non-ASCII `str`, and `hmac.compare_digest` raises
+# `TypeError` on non-ASCII `str` operands. An unauthenticated request
+# must 401, never 500 -- compared as bytes now, not `str`.
+
+
+def test_non_ascii_auth_header_is_401_not_500(client):
+    # httpx's `headers=` dict encodes `str` values as strict ASCII
+    # client-side and refuses non-ASCII outright -- passing raw bytes
+    # instead is what actually reaches the wire (and what Starlette then
+    # decodes as latin-1 on the way back in), reproducing the real
+    # scenario rather than being blocked a layer too early.
+    r = client.post("/api/v1/discovery", json=BODY,
+                    headers={"Authorization": ("Bearer " + "\xe9\xe9\xe9").encode("latin-1")})
+    assert r.status_code == 401
+
+
+# --- Review round 1 -----------------------------------------------------
+#
+# Critical 2: the placeholder name (`"(discovered) <item_id>"`) used to
+# be the only path -- nothing ever wrote a real name over it, so every
+# item the collector found without a name attached would keep that
+# placeholder forever, and that string is what `/store/{id}/clearance`
+# and `/item/{id}` serve to a phone. `INSERT_PRODUCT` now heals a
+# placeholder the first time a real name arrives, and never lets a
+# later placeholder clobber a real name that's already there.
+
+
+def test_real_name_heals_a_placeholder(client):
+    item_id = "555000111"
+    no_name = {"observations": [
+        {"item_id": item_id, "store_id": "2502", "clearance_price": "1.00"}]}
+    with_name = {"observations": [
+        {"item_id": item_id, "store_id": "2504", "clearance_price": "2.00",
+         "name": "Real Product Name"}]}
+
+    r1 = client.post("/api/v1/discovery", json=no_name,
+                     headers={"Authorization": f"Bearer {TOKEN}"})
+    assert r1.json()["accepted"] == 1
+    assert client.get(f"/api/v1/item/{item_id}").json()["name"] == f"(discovered) {item_id}"
+
+    r2 = client.post("/api/v1/discovery", json=with_name,
+                     headers={"Authorization": f"Bearer {TOKEN}"})
+    assert r2.json()["accepted"] == 1
+    assert client.get(f"/api/v1/item/{item_id}").json()["name"] == "Real Product Name"
+
+
+def test_placeholder_never_clobbers_a_real_name(client):
+    item_id = "555000222"
+    with_name = {"observations": [
+        {"item_id": item_id, "store_id": "2502", "clearance_price": "1.00",
+         "name": "Real Product Name"}]}
+    no_name = {"observations": [
+        {"item_id": item_id, "store_id": "2504", "clearance_price": "2.00"}]}
+
+    r1 = client.post("/api/v1/discovery", json=with_name,
+                     headers={"Authorization": f"Bearer {TOKEN}"})
+    assert r1.json()["accepted"] == 1
+    assert client.get(f"/api/v1/item/{item_id}").json()["name"] == "Real Product Name"
+
+    r2 = client.post("/api/v1/discovery", json=no_name,
+                     headers={"Authorization": f"Bearer {TOKEN}"})
+    assert r2.json()["accepted"] == 1
+    assert client.get(f"/api/v1/item/{item_id}").json()["name"] == "Real Product Name"
