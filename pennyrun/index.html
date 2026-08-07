@@ -305,6 +305,27 @@ input,select,textarea{font-family:inherit;font-size:16px}
   background:var(--paper);border:1px dashed var(--line);border-radius:8px;
   padding:7px 9px;margin:-2px 0 9px;line-height:1.45;
 }
+/* On-demand area check. The droplet queues, a residential collector works
+   the queue -- the phone cannot ask Home Depot itself (their edge refuses
+   the CORS preflight), so everything here talks only to our own origin. */
+.chk{border:1px solid var(--line);border-radius:6px;padding:12px;margin-bottom:10px;
+     background:var(--paper)}
+.chk__row{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.chk__label{font-weight:650;font-size:15px}
+.chk__count{font-family:var(--mono);font-size:12px;color:var(--mute);
+            font-variant-numeric:tabular-nums}
+.chk__bar{height:8px;border-radius:4px;background:var(--hair);overflow:hidden;margin-top:8px}
+.chk__fill{height:100%;width:0%;background:var(--tag);transition:width .4s ease}
+.chk__fill.is-done{background:var(--go)}
+.chk__fill.is-bad{background:var(--stop)}
+.chk__stores{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.chk__s{font-family:var(--mono);font-size:11px;padding:3px 8px;border-radius:10px;
+        border:1px solid var(--line);color:var(--mute)}
+.chk__s.is-ready{border-color:var(--go);color:var(--go);background:var(--go-bg)}
+.chk__s.is-run{border-color:var(--tag-edge);color:var(--ink);background:var(--tag)}
+.chk__s.is-bad{border-color:var(--stop);color:var(--stop);background:var(--stop-bg)}
+@media (prefers-reduced-motion: reduce){ .chk__fill{transition:none} }
+
 .linkbox{display:flex;gap:7px}
 .linkbox .field__i{flex:1;min-width:0}
 .storeitem{
@@ -491,6 +512,20 @@ input,select,textarea{font-family:inherit;font-size:16px}
       </div>
       <div id="storepick"></div>
     </div>
+
+    <div class="chk" id="chkcard" hidden>
+      <div class="chk__row">
+        <span class="chk__label" id="chkTitle">Checking prices</span>
+        <span class="chk__count" id="chkCount"></span>
+      </div>
+      <div class="chk__bar"><div class="chk__fill" id="chkFill"></div></div>
+      <p class="scan__hint" id="chkNote" style="margin:8px 0 0"></p>
+      <div id="chkStores" class="chk__stores"></div>
+    </div>
+
+    <button class="btn btn--go btn--wide" id="chkgo" style="margin-bottom:8px">
+      ⟳ Check prices at my stores
+    </button>
 
     <p class="scan__hint" id="sweepsum" style="margin:8px 0"></p>
     <div id="sweeplist"></div>
@@ -1466,6 +1501,170 @@ function showSweep(list){
    ============================================================ */
 var CATALOG = null;
 
+/* ============================================================
+   ON-DEMAND AREA CHECK
+
+   The phone cannot ask Home Depot directly -- their edge answers the
+   CORS preflight with 200 and no Access-Control-Allow-Origin, so a
+   browser is refused before it ever sends the real request. Everything
+   below therefore talks only to our own origin: we ask the droplet, the
+   droplet queues per STORE (two users wanting one store share one job),
+   and a residential collector works the queue.
+
+   A store is ~81 requests and about five seconds, so this is usually
+   over before the user looks away. Never show a countdown the system
+   cannot honour -- if the collector has not checked in, say so.
+   ============================================================ */
+var API = "/api/v1";
+var chkTimer = null, chkJobs = [], chkStores = [];
+
+function apiJSON(path, opts){
+  return fetch(API + path, opts).then(function(r){
+    return r.json().catch(function(){ return {}; }).then(function(body){
+      if(!r.ok) throw new Error(body.detail || ("HTTP " + r.status));
+      return body;
+    });
+  });
+}
+
+function chkShow(on){ $("chkcard").hidden = !on; }
+
+function chkPaint(title, note, done, total, tone){
+  $("chkTitle").textContent = title;
+  $("chkNote").textContent = note || "";
+  $("chkCount").textContent = total ? done + " of " + total : "";
+  var fill = $("chkFill");
+  fill.style.width = (total ? Math.round(100 * done / total) : 0) + "%";
+  fill.className = "chk__fill" + (tone ? " is-" + tone : "");
+  $("chkStores").innerHTML = chkStores.map(function(s){
+    var cls = s.state === "done" ? "is-ready"
+            : s.state === "failed" ? "is-bad"
+            : s.state === "running" ? "is-run" : "";
+    var tail = s.state === "queued" && s.position > 1
+             ? " · " + s.position + " ahead" : "";
+    return '<span class="chk__s ' + cls + '">' + esc(storeName(s.store_id)) + tail + "</span>";
+  }).join("");
+}
+
+function chkStop(){ if(chkTimer){ clearInterval(chkTimer); chkTimer = null; } }
+
+function startCheck(){
+  var picked = state.pickedStores || [];
+  if(!picked.length){
+    $("storesum").textContent = "Pick your stores first — tap them above.";
+    return;
+  }
+  chkStop();
+  $("chkgo").disabled = true;
+  chkStores = picked.map(function(id){ return { store_id: id, state: "asking" }; });
+  chkShow(true);
+  chkPaint("Asking…", "", 0, picked.length, null);
+
+  apiJSON("/checks", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ store_ids: picked })
+  }).then(function(res){
+    chkJobs = res.queued || [];
+    chkStores = picked.map(function(id){
+      var q = (res.queued || []).filter(function(x){ return x.store_id === id; })[0];
+      if(q) return { store_id: id, state: "queued", job_id: q.job_id, position: q.position };
+      return { store_id: id, state: "done" };
+    });
+
+    if(!chkJobs.length){
+      chkDone("Already current", "These prices were checked in the last few hours.");
+      return;
+    }
+    if(!res.collector_online){
+      /* Honest, not hopeful: the queue is real but nothing is draining it. */
+      chkPaint("Queued", "Your collector is offline — this will run when it's back.",
+               picked.length - chkJobs.length, picked.length, null);
+      $("chkgo").disabled = false;
+      return;
+    }
+    chkPaint("Checking your stores", "Usually a few seconds. You can leave this screen.",
+             picked.length - chkJobs.length, picked.length, null);
+    chkTimer = setInterval(pollCheck, 2500);
+    pollCheck();
+  }).catch(function(e){
+    chkPaint("Couldn't start", e.message, 0, 0, "bad");
+    $("chkgo").disabled = false;
+  });
+}
+
+function pollCheck(){
+  Promise.all(chkJobs.map(function(j){
+    return apiJSON("/checks/" + j.job_id).catch(function(){ return null; });
+  })).then(function(states){
+    states.forEach(function(st){
+      if(!st) return;
+      var row = chkStores.filter(function(s){ return s.store_id === st.store_id; })[0];
+      if(row) row.state = st.state;
+    });
+    var total = chkStores.length;
+    var settled = chkStores.filter(function(s){
+      return s.state === "done" || s.state === "failed";
+    }).length;
+    var offline = states.some(function(st){ return st && st.collector_online === false; });
+
+    if(settled < total){
+      chkPaint("Checking your stores",
+               offline ? "Your collector went offline — this will resume when it's back."
+                       : "Usually a few seconds. You can leave this screen.",
+               settled, total, null);
+      return;
+    }
+    chkStop();
+    var failed = chkStores.filter(function(s){ return s.state === "failed"; });
+    if(failed.length === total){
+      chkPaint("Couldn't check", "Home Depot didn't answer. Try again in a little while.",
+               total, total, "bad");
+      $("chkgo").disabled = false;
+      return;
+    }
+    chkDone(failed.length ? "Partly checked" : "Up to date",
+            failed.length ? failed.length + " store(s) didn't answer — the rest are current."
+                          : "");
+  });
+}
+
+function chkDone(title, note){
+  chkStop();
+  $("chkgo").disabled = false;
+  chkPaint(title, note, chkStores.length, chkStores.length, "done");
+  loadFromApi();
+}
+
+/* Read the freshly-checked prices back out of the droplet. The app's older
+   path reads the bundled clearance.json; this one asks for exactly the
+   stores the user picked, so what they see is what was just collected. */
+function loadFromApi(){
+  var picked = (state.pickedStores || []).filter(Boolean);
+  if(!picked.length) return;
+  Promise.all(picked.map(function(id){
+    return apiJSON("/store/" + encodeURIComponent(id) + "/clearance?limit=400")
+             .catch(function(){ return []; });
+  })).then(function(lists){
+    var rows = [];
+    lists.forEach(function(list){
+      (list || []).forEach(function(r){
+        /* into the same 15-field shape the rest of the app already speaks,
+           so nothing downstream needs to know where the row came from */
+        rows.push([r.name, r.item_id, r.category, Number(r.clearance_price),
+                   Number(r.list_price), Number(r.pct_off), r.store_id,
+                   r.quantity, r.store_only ? 1 : 0, r.canonical_url,
+                   r.upc, null, null, 0, null]);
+      });
+    });
+    if(!rows.length) return;
+    CATALOG = { harvested: "just now", hits: rows, total_hits: rows.length,
+                stores_n: picked.length };
+    buildCatIndex(CATALOG);
+    showCatalog();
+  });
+}
+
 function loadCatalog(){
   if(CATALOG) return Promise.resolve(CATALOG);
   return fetch("clearance.json").then(function(r){ return r.json(); })
@@ -2161,6 +2360,7 @@ $("scanstores").addEventListener("click", function(){
   showCatalog();
 });
 
+$("chkgo").addEventListener("click", startCheck);
 $("catbtn").addEventListener("click", function(){
   if(sweepSource === "catalog" && sweepList.length){
     sweepList = []; renderSweep(); return;
