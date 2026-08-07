@@ -5,7 +5,9 @@ app = FastAPI(title="Penny Run", docs_url="/api/v1/docs")
 V = "/api/v1"
 
 from api.ingest import router as ingest_router
+from api.checks import router as checks_router
 app.include_router(ingest_router)
+app.include_router(checks_router)
 
 LATEST = """
 select distinct on (o.item_id, o.store_id)

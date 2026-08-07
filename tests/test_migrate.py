@@ -15,7 +15,11 @@ pytestmark = pytest.mark.skipif(
 
 def test_apply_reports_each_migration_once_then_noop(fresh_conn):
     first = migrate.apply(fresh_conn)
-    assert first == ["001_core.sql", "002_append_only.sql"]
+    # every migration on disk, in order, exactly once -- asserted against the
+    # directory rather than a hardcoded list, so adding a migration does not
+    # break a test that has nothing to do with it
+    on_disk = sorted(p.name for p in migrate.MIGRATIONS.glob("*.sql"))
+    assert first == on_disk
     second = migrate.apply(fresh_conn)
     assert second == []
 

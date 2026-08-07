@@ -163,6 +163,11 @@ def _authorise(header):
         raise HTTPException(401, "bad or missing ingest token")
 
 
+# Shared with api/checks.py: the collector authenticates the same way
+# whether it is uploading observations or working the job queue.
+authorise = _authorise
+
+
 @router.post("/api/v1/discovery")
 def discovery(payload: dict, authorization: str = Header(None)):
     _authorise(authorization)
