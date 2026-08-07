@@ -4,6 +4,9 @@ from api.db import rows
 app = FastAPI(title="Penny Run", docs_url="/api/v1/docs")
 V = "/api/v1"
 
+from api.ingest import router as ingest_router
+app.include_router(ingest_router)
+
 LATEST = """
 select distinct on (o.item_id, o.store_id)
        o.item_id, o.store_id, o.list_price, o.clearance_price,
