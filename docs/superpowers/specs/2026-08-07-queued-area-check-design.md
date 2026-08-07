@@ -4,8 +4,12 @@
 **Status:** Draft for review
 **Supersedes:** `2026-08-07-in-browser-checker-design.md`
 **Goal:** a user picks their area, taps "check my stores", and gets fresh
-clearance prices for those stores — usually instantly, and within minutes when
+clearance prices for those stores — usually instantly, and within seconds when
 not.
+
+**Status note (2026-08-07):** steps 1–3 of §10 are built, reviewed and deployed.
+The queue is live on `penny.premofusa.shop`; store 2502 was checked end to end
+through it. The app side (§7) and push (§6) are not built.
 
 ---
 
@@ -54,16 +58,46 @@ user asks for 5 stores
 So cost scales with **distinct stale stores**, not with users. Once a metro is
 covered, every additional user there is free.
 
+### What a store actually costs — measured, not projected
+
+Measured against production on 2026-08-07, store 2502:
+
 ```
-81 requests per store   (1,288 candidates ÷ 16 per batch)
-measured wall  ~2,350 requests per window
-              →  ~29 distinct stores per window
+81 chunks (1,288 candidates ÷ 16 per request)
+943 hits, 4.8 seconds, 3 of 81 chunks refused
 ```
 
-Baltimore is 8 stores. One collector can cover roughly a metro and a half before
-the address becomes the constraint.
+**A store is ~5 seconds, not ~81.** An earlier draft of this document specified
+a 1 request/second pace and built its whole safety argument on it. The
+implementation instead reuses `sweep.py`'s existing 20-worker concurrency, and
+the measurement says that is the right call — see below. A five-store check is
+therefore roughly **25 seconds of collector time**, not seven minutes.
 
----
+### Why the burst is safe: the wall is volume, not rate
+
+The block on 2026-08-07 is easy to misread as a rate limit. It was not.
+
+```
+Parkville     1138 hits  27.9s   587 chunks   ~21 req/s    43 refused (7%)
+Towson         866 hits  26.3s   587 chunks   ~22 req/s    49 refused (8%)
+Timonium       691 hits  25.7s   587 chunks   ~23 req/s    44 refused (7%)
+Golden Ring    878 hits  25.7s   587 chunks   ~23 req/s    60 refused (10%)
+White Marsh       0 hits   5.3s   587 chunks   ~22 req/s   587 refused (100%)
+```
+
+**The rate never changed.** All five stores ran at the same ~22 requests/second.
+Four succeeded and the fifth was refused outright — after roughly **2,350
+cumulative requests**. What crossed a threshold was the running total in the
+window, not the instantaneous pace.
+
+A job is 81 requests: **one twenty-ninth** of that, at a pace four stores
+already sustained without trouble. The live job above drew 3 refusals out of 81
+(3.7%), *below* the 7–10% the healthy stores of that night saw.
+
+**So the control is the shared budget, not a sleep between requests.** Pacing at
+1/s would have made a store take 81 seconds instead of 5 and bought nothing the
+budget does not already provide — while making the feature markedly worse to
+use.
 
 ## 3. Flow
 
@@ -74,8 +108,9 @@ the address becomes the constraint.
            responds { ready: [...], queued: [{store_id, job_id, position}] }
 3. collector  GET /api/v1/checks/next        (bearer token, same as /discovery)
               claims one job, atomically
-4. collector  prices the candidate list at that store, at its measured-safe pace,
-              with the existing refusal circuit breaker
+4. collector  prices the candidate list at that store -- ~81 requests, ~5s --
+              holding the gate, charging the shared budget, with the existing
+              refusal circuit breaker
 5. collector  POST /api/v1/discovery         (existing endpoint, trusted=true)
 6. collector  POST /api/v1/checks/{id}/done  {hits, refused, duration}
 7. droplet    fires web push to every device that asked for that store
@@ -83,9 +118,15 @@ the address becomes the constraint.
 ```
 
 Steps 4 and 5 are `tools/sweep.py` and `tools/upload.py` as they already exist —
-including the pacing, the `SCAN_ABORT_THRESHOLD` circuit breaker, and the
-Refused-vs-Unreachable distinction. **The collector needs a job-runner loop
+including the `SCAN_ABORT_THRESHOLD` circuit breaker and the
+Refused-vs-Unreachable distinction. **The collector needed a job-runner loop
 around them, not new collection logic.**
+
+One correction learned in review: a job that is refused stops the loop, but a job
+that is merely *unreachable* must not — and neither may mark its store checked.
+An all-unreachable job produced `refused_rate = 0.0`, so the breaker never
+tripped and the store was marked fresh for six hours having never been
+contacted. `price_at` now returns both rates separately.
 
 ---
 
@@ -113,11 +154,24 @@ create unique index check_job_live on check_job (store_id)
 create index check_job_queue on check_job (state, requested_at);
 
 create table check_watcher (          -- who to notify when a job finishes
-  job_id    bigint references check_job,
+  job_id    bigint references check_job on delete cascade,
   device_id uuid references device,
   primary key (job_id, device_id)
 );
+
+-- The collector polls whether or not there is work, so this is a truthful
+-- "is anyone home" even when the queue is empty.
+create table collector_heartbeat (
+  collector text primary key, last_seen timestamptz, last_job_id bigint
+);
 ```
+
+Two rules that only became obvious once it was running: the ask must **sort**
+`store_ids` before inserting, because the whole ask is one transaction and two
+overlapping asks in opposite order deadlock on the index — a store picker orders
+by distance from each user, so that is the normal case. And a job left `running`
+is a permanent tombstone, since `check_job_live` covers it, so the droplet reaps
+jobs whose collector never reported.
 
 `observation` is unchanged — the collector writes through `/discovery` exactly as
 it does tonight, `trusted=true`, append-only.
@@ -203,8 +257,8 @@ the hard way:
 | state | copy |
 |---|---|
 | all fresh | "Prices are current as of 20 minutes ago" — no job, instant |
-| queued | "Checking Timonium — about 2 minutes. You can close this." |
-| queued behind others | "2 stores ahead of you — about 5 minutes." |
+| queued | "Checking Timonium — about 10 seconds. You can close this." |
+| queued behind others | "2 stores ahead of you — under a minute." |
 | collector offline | "Queued. Your collector is offline — this will run when it's back." |
 | done | push notification + results in the existing Checked tab |
 
@@ -216,8 +270,9 @@ better rather than merely possible.
 
 ## 8. Honest limits
 
-- **One residential address is the ceiling.** ~29 distinct stores per window. Fine
-  for a metro and a half; not a public national product on one home connection.
+- **One residential address is the ceiling.** ~18 distinct stores an hour under
+  the shared budget. Fine for a metro and a half; not a public national product
+  on one home connection.
   When that binds, the options are more collector boxes, residential proxies
   (~$50–300/mo, lets the droplet collect directly), or a native app (no CORS, but
   Xcode, App Store, and $99/yr).
