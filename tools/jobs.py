@@ -217,11 +217,32 @@ def loop(base, token, once=False, budget=None):
             return 0
 
 
+def load_env_file(path=None):
+    """Read .env.collector the way collect.sh does.
+
+    launchd, like systemd, does not inherit a login shell's environment -- so
+    a scheduled run has none of these set even though they work by hand. The
+    file is 0600 and gitignored; keeping the token there rather than in a
+    plist keeps it out of anything world-readable.
+    """
+    path = path or os.path.join(ROOT, ".env.collector")
+    if not os.path.exists(path):
+        return
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            os.environ.setdefault(k.strip(), v.strip())
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--once", action="store_true", help="take at most one job")
     args = ap.parse_args(argv)
 
+    load_env_file()
     base = os.environ.get("PENNYRUN_API")
     token = os.environ.get("PENNYRUN_INGEST_TOKEN")
     if not base or not token:
