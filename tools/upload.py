@@ -67,10 +67,36 @@ class UploadError(Exception):
 
 
 def to_observation(row):
-    return {"item_id": row[1], "store_id": row[6], "name": row[0],
-            "clearance_price": row[3], "list_price": row[4],
+    """Every field `sweep.row()` produces, not just the eight that used to
+    make it onto the wire. Two things worth knowing:
+
+    - Money (`clearance_price`, `list_price`) is sent as a string, not a
+      `float` -- `row[3]`/`row[4]` are already `round(x, 2)` in
+      `sweep.row()`, and formatting with `:.2f` here is the last place a
+      `float` can still leak into the request body. `api/validate.py`
+      parses the string into an exact `Decimal`, and `api/ingest.py`
+      inserts that `Decimal`, so money never touches `float` on this path
+      end to end.
+    - `category`/`canonical_url`/`upc`/`store_sku`/`model_number` come
+      straight off the row; an empty string (Home Depot didn't return
+      that field, or `sweep.row()` had nothing to put there) is sent as
+      `None`, not `""` -- `api/ingest.py`'s upsert uses
+      `coalesce(excluded.x, product.x)` for these, which only skips a
+      real `NULL`. Sending `""` would silently blank out a value already
+      on file. `replacement_id` is Home Depot's boolean "this item has a
+      successor SKU" flag (`sweep.row()`'s `superseded`), not an actual
+      SKU -- `product.replacement_id` records the flag as `"1"`, and
+      `None` (not `"0"`) when there isn't one, for the same
+      coalesce-safety reason.
+    """
+    return {"item_id": row[1], "store_id": row[6], "name": row[0] or None,
+            "category": row[2] or None,
+            "clearance_price": f"{row[3]:.2f}", "list_price": f"{row[4]:.2f}",
             "pct_off": row[5], "quantity": row[7],
-            "store_only": bool(row[8])}
+            "store_only": bool(row[8]),
+            "canonical_url": row[9] or None, "upc": row[10] or None,
+            "store_sku": row[11] or None, "model_number": row[12] or None,
+            "replacement_id": "1" if row[13] else None}
 
 
 def _post(url, body, token):

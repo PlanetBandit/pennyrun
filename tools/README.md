@@ -73,25 +73,34 @@ marked down. `discover` exists because of this.
 
 ## Where it can run — this one matters
 
-**GitHub's hosted runners cannot do this job.** Measured, not assumed:
+**GitHub's hosted runners cannot do this job, and neither can most other
+datacentre boxes.** Measured 2026-08-05, from `tools/hdclient.py`:
 
-| host | from here | from a GitHub runner |
+| client | residential | droplet |
 |---|---|---|
-| `apionline.homedepot.com` (pricing) | 200 | **206 "Generic Errors API"** |
-| `www.homedepot.com/sitemap/…` | 200 | 200 |
-| `www.homedepot.com/s/…` (search) | 200 | **403** |
+| `urllib` / plain `curl` | **206 refused** | **206 refused** |
+| `curl_cffi` (`safari17_0`, browser-grade TLS fingerprint) | 200 (4/4) | **206 refused** (0/4) |
 
-Four header variants were tried from the runner — origin/referer, a
-desktop user-agent, apollo client headers, and the plain request. All
-four came back 206. The same four from a residential address all return
-200. It is the address range, so no user-agent or header fixes it.
+Two independent checks guard the pricing gateway, and missing either one
+is fatal: a browser-grade TLS fingerprint (`urllib` never presents one,
+and is refused **even from a residential connection**) **and** a
+non-datacentre address (`curl_cffi`, with the fingerprint right, is
+still refused 0/4 from the droplet). It is not simply "the address
+range" — a plain client fails everywhere regardless of where it runs,
+and the right client still fails from a datacentre range. Both have to
+be true for a request to succeed: the right fingerprint, from the right
+kind of address. Neither is a user-agent or header fix; the fingerprint
+comes from `curl_cffi`'s TLS/HTTP2 handshake, and the address is about
+where the box physically is.
 
-The failure mode is nasty: `call()` swallows exceptions and returns an
-empty list, so a blocked runner looks exactly like eight stores with
-nothing on clearance. The first real run reported `0 hits` at all eight
-stores in 6–9 seconds each, against 34–69 seconds for a working scan.
-The scan's safety rail refused to overwrite the list, and the `probe`
-stage now runs first so the reason is on the line that matters.
+`tools/sweep.py`'s `call()` no longer swallows exceptions into an empty
+list, either — a refused or unreachable chunk is counted and surfaced
+(`in_batches`, the `BatchRun` it returns), and `discover()`/`scan()` die
+loudly the moment a run is mostly refused, rather than quietly reporting
+an empty catalogue as "nothing on clearance tonight." There is also no
+separate `probe` stage that runs before them anymore — `discover()` and
+`scan()` each check for themselves and fail fast the moment Home Depot
+refuses a request, on the line where it actually happened.
 
 ### Check any machine before trusting it
 

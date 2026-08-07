@@ -96,12 +96,31 @@ logger = logging.getLogger("api.ingest")
 # healed the day a row carrying a real name shows up for that item_id,
 # or every "(discovered) <id>" name would be permanent -- there is no
 # other write path to `product.name` once one exists.
+#
+# category/upc/store_sku/model_number/canonical_url/replacement_id use
+# `coalesce(excluded.x, product.x)` -- the same spirit as the `name`
+# healing above, but the opposite direction: a *later* row is trusted to
+# improve these fields, just never to blank one out. Home Depot's own
+# API doesn't return every field on every call (`_LITE` in
+# `tools/hdclient.py` skips them entirely, and `_FULL` can still come
+# back with a field null), and `validate.check` turns a bare empty
+# string into `None` for exactly this reason -- `coalesce` only skips a
+# real `NULL`, so a blank string sent by mistake would otherwise win
+# against a value already on file.
 INSERT_PRODUCT = (
-    "insert into product (item_id, name) values (%s, %s) "
+    "insert into product (item_id, name, category, upc, store_sku, "
+    "model_number, canonical_url, replacement_id) "
+    "values (%s, %s, %s, %s, %s, %s, %s, %s) "
     "on conflict (item_id) do update set "
     "last_seen = current_date, "
     "name = case when product.name like '(discovered) %%' "
-    "            then excluded.name else product.name end"
+    "            then excluded.name else product.name end, "
+    "category = coalesce(excluded.category, product.category), "
+    "upc = coalesce(excluded.upc, product.upc), "
+    "store_sku = coalesce(excluded.store_sku, product.store_sku), "
+    "model_number = coalesce(excluded.model_number, product.model_number), "
+    "canonical_url = coalesce(excluded.canonical_url, product.canonical_url), "
+    "replacement_id = coalesce(excluded.replacement_id, product.replacement_id)"
 )
 INSERT_OBSERVATION = (
     "insert into observation (item_id, store_id, observed_at, list_price, "
@@ -152,17 +171,23 @@ def discovery(payload: dict, authorization: str = Header(None)):
     if not isinstance(observations, list):
         raise HTTPException(400, "observations must be a list")
 
+    # `validate.check` returns the parsed/sanitised fields (money as
+    # `Decimal`, catalogue strings bounded and empty-string-normalised)
+    # rather than just validating in place -- merged back over the raw
+    # `obs` so a field `validate.py` doesn't touch (`store_only`) still
+    # comes through untouched, while every field it does touch is the
+    # parsed value, never the raw one.
     candidates, rejected = [], 0
     for obs in observations:
         if not isinstance(obs, dict):
             rejected += 1
             continue
         try:
-            validate.check(obs)
+            parsed = validate.check(obs)
         except _BAD_ROW_ERRORS:
             rejected += 1
             continue
-        candidates.append(obs)
+        candidates.append({**obs, **parsed})
 
     accepted = 0
     with rows() as cur:
@@ -173,7 +198,10 @@ def discovery(payload: dict, authorization: str = Header(None)):
                     with conn.transaction():  # always a SAVEPOINT: nested in the above
                         cur.execute(
                             INSERT_PRODUCT,
-                            (o["item_id"], o.get("name") or _placeholder_name(o["item_id"])))
+                            (o["item_id"], o.get("name") or _placeholder_name(o["item_id"]),
+                             o.get("category"), o.get("upc"), o.get("store_sku"),
+                             o.get("model_number"), o.get("canonical_url"),
+                             o.get("replacement_id")))
                         cur.execute(
                             INSERT_OBSERVATION,
                             (o["item_id"], o["store_id"], o.get("list_price"),

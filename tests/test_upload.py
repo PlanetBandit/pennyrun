@@ -12,10 +12,22 @@ def test_row_becomes_an_observation():
     obs = upload.to_observation(ROW)
     assert obs["item_id"] == "204767783"
     assert obs["store_id"] == "2502"
-    assert obs["clearance_price"] == 1.2
-    assert obs["list_price"] == 49.98
     assert obs["pct_off"] == 98
     assert obs["quantity"] == 3
+
+
+def test_money_is_sent_as_a_string_not_a_float():
+    """Important 1 of the branch review: `sweep.py` builds prices with
+    `float()`/`round()`, and putting those floats straight into the JSON
+    body is the one place `float` could still reach the wire even though
+    `api/validate.py` parses everything into an exact `Decimal`. Sending
+    a string here is what makes "money never touches float" true end to
+    end, not just inside `validate.py`."""
+    obs = upload.to_observation(ROW)
+    assert obs["clearance_price"] == "1.20"
+    assert obs["list_price"] == "49.98"
+    assert isinstance(obs["clearance_price"], str)
+    assert isinstance(obs["list_price"], str)
 
 
 def test_row_carries_the_product_name():
@@ -25,6 +37,51 @@ def test_row_carries_the_product_name():
     "(discovered) <id>" forever."""
     obs = upload.to_observation(ROW)
     assert obs["name"] == "Roofing"
+
+
+def test_row_carries_the_catalogue_fields_the_seed_alone_would_never_grow():
+    """Critical 3 of the branch review: every catalogue field but the name
+    used to stop at `sweep.row()` -- `to_observation` dropped them before
+    they ever left the home box, so `category`/`upc`/`store_sku`/
+    `model_number`/`canonical_url`/`replacement_id` were permanently NULL
+    for anything discovered after the one-time 811-product seed. That
+    silently broke `GET /api/v1/lookup?upc=`, the app's barcode-scan entry
+    point, for every item found after day one."""
+    obs = upload.to_observation(ROW)
+    assert obs["category"] == "Building"
+    assert obs["canonical_url"] == "/p/x/204767783"
+    assert obs["upc"] == "791308000105"
+    assert obs["store_sku"] == "418625"
+    assert obs["model_number"] == "4305036"
+    assert obs["replacement_id"] is None  # ROW's flag (index 13) is 0
+
+
+def test_replacement_id_flag_becomes_the_string_one_not_zero():
+    """The flag is stored as `"1"`/`None`, never `"0"` -- `api/ingest.py`'s
+    `coalesce(excluded.replacement_id, product.replacement_id)` upsert
+    only skips a real `NULL`, so a `"0"` would be indistinguishable from
+    "actually superseded" the moment anything treats the column as
+    truthy, and would itself defeat coalesce by being a non-NULL value."""
+    row = list(ROW)
+    row[13] = 1
+    obs = upload.to_observation(row)
+    assert obs["replacement_id"] == "1"
+
+
+def test_empty_catalogue_fields_become_none_not_empty_string():
+    """An empty string must never reach the wire for an optional
+    catalogue field -- `coalesce(excluded.x, product.x)` only skips a
+    real `NULL`, so a blank string sent here would silently overwrite a
+    value already stored for this item_id from an earlier, more complete
+    row."""
+    row = list(ROW)
+    row[2] = row[9] = row[10] = row[11] = row[12] = ""
+    obs = upload.to_observation(row)
+    assert obs["category"] is None
+    assert obs["canonical_url"] is None
+    assert obs["upc"] is None
+    assert obs["store_sku"] is None
+    assert obs["model_number"] is None
 
 
 def test_batches_are_capped(monkeypatch):

@@ -63,6 +63,16 @@ say() { echo "==> $*"; }
 [ "$(id -u)" = "0" ] || die "run this with sudo"
 [ -n "$HOST" ] || die "set PENNYRUN_HOST to the hostname you will serve from"
 
+# The scan unit's upload target defaults to this box's own API (the
+# droplet topology: this box serves and collects both) -- but Home Depot
+# only ever answers a residential address (see the SWEEPABLE check
+# below), so a droplet can never actually be the box that collects.
+# PENNYRUN_API, set in this script's own environment, points the scan
+# timer at a *different* droplet instead: the collector topology this
+# architecture actually needs. See deploy/README.md, "Running the
+# collector on a home box".
+API_URL="${PENNYRUN_API:-https://$HOST}"
+
 # ---------------------------------------------------------------- packages
 
 say "installing packages"
@@ -146,13 +156,39 @@ fi
 # ---------------------------------------------------------------- can it?
 
 say "checking whether this machine can reach Home Depot"
+# tools/checkhost.py exits 0 GOOD, 1 BLOCKED (they answered and refused --
+# a datacentre address, not fixable from here), or 2 UNKNOWN (we never got
+# a clean answer -- almost always a local network/TLS problem, not a Home
+# Depot refusal). Capturing the real code, not just pass/fail, is what
+# lets the message below tell those two apart instead of sending whoever
+# is reading it down the wrong road.
+CHECK_STATUS=0
+(cd "$DIR" && "$DIR/.venv/bin/python" -m tools.checkhost) || CHECK_STATUS=$?
 SWEEPABLE=yes
-(cd "$DIR" && "$DIR/.venv/bin/python" -m tools.checkhost) || SWEEPABLE=no
+if [ "$CHECK_STATUS" != "0" ]; then
+	SWEEPABLE=no
+fi
 if [ "$SWEEPABLE" = "no" ]; then
 	echo
-	echo "    The site will still serve. The nightly timer is installed and"
-	echo "    will start working by itself the day this host stops being"
-	echo "    refused -- nothing here needs redoing."
+	if [ "$CHECK_STATUS" = "1" ]; then
+		echo "    Home Depot refused this address (checkhost: BLOCKED). That is a"
+		echo "    datacentre IP range being refused, not a header or user-agent"
+		echo "    problem -- it will not start working by itself, and nothing in"
+		echo "    this script can fix it. The sweep has to run from a residential"
+		echo "    connection instead -- see deploy/README.md, 'Running the"
+		echo "    collector on a home box'."
+	else
+		echo "    checkhost could not tell (exit $CHECK_STATUS, UNKNOWN) -- most"
+		echo "    likely a local network or TLS problem on this box, not a Home"
+		echo "    Depot refusal. Fix that first, then check again:"
+		echo "        $DIR/.venv/bin/python -m tools.checkhost"
+	fi
+	echo
+	echo "    The site will still serve either way. pennyrun-discover.timer and"
+	echo "    pennyrun-scan.timer are installed below but left disabled -- a"
+	echo "    disabled timer never fires on its own, so nothing here hits Home"
+	echo "    Depot from this box until you explicitly run:"
+	echo "        sudo systemctl enable --now pennyrun-discover.timer pennyrun-scan.timer"
 	echo
 fi
 
@@ -237,10 +273,13 @@ write_unit() { cat > "/etc/systemd/system/$1"; }
 
 # ------------------------------------------------------------------ the API
 
-# Generated rather than `install`ed straight from the committed
-# deploy/pennyrun-api.service so it tracks $DIR and $RUN_AS when either is
-# overridden -- the committed file hardcodes /opt/pennyrun and the
-# `pennyrun` user, which is only ever right at the defaults.
+# Generated fresh every run rather than `install`ed from a committed unit
+# file, so it always tracks $DIR and $RUN_AS when either is overridden --
+# a static file would hardcode /opt/pennyrun and the `pennyrun` user,
+# which is only ever right at the defaults. (An earlier version of this
+# script did ship a committed deploy/pennyrun-api.service alongside this
+# generated one; it was never installed from and drifted out of sync
+# with what this actually writes, so it was deleted rather than fixed.)
 say "installing the API service"
 write_unit pennyrun-api.service <<EOF
 [Unit]
@@ -323,6 +362,23 @@ RandomizedDelaySec=120
 WantedBy=timers.target
 EOF
 
+# The scan unit's ingest credential: an explicit PENNYRUN_INGEST_TOKEN in
+# this script's own environment wins, embedded directly in the unit,
+# because it means this box collects for a *different* droplet and there
+# is no local $INGEST_ENV for that droplet's token to live in. Otherwise
+# fall back to $INGEST_ENV -- the token this run generated (or already
+# had) for this box's own API -- read at service-start time via
+# EnvironmentFile so a rotated token doesn't need a re-run of this
+# script. Prefixed with "-" in that branch because scan() already treats
+# a missing token as "don't upload, just write clearance.json" (tested)
+# -- a missing/unreadable token file must not stop the scan itself from
+# running.
+if [ -n "${PENNYRUN_INGEST_TOKEN:-}" ]; then
+	INGEST_LINE="Environment=PENNYRUN_INGEST_TOKEN=$PENNYRUN_INGEST_TOKEN"
+else
+	INGEST_LINE="EnvironmentFile=-$INGEST_ENV"
+fi
+
 write_unit pennyrun-scan.service <<EOF
 [Unit]
 Description=Penny Run nightly clearance scan
@@ -337,15 +393,14 @@ Environment=PENNYRUN_DATA=$DATA
 Environment=PENNYRUN_OUT=$DATA/clearance.json
 # A systemd unit does not inherit anyone's login environment -- setting
 # PENNYRUN_API/PENNYRUN_INGEST_TOKEN in a shell profile on this box does
-# nothing for this unit. Wired here instead: PENNYRUN_API defaults to the
-# host this box itself serves (its own API, through Caddy's reverse
-# proxy), and the token comes from $INGEST_ENV, the same file
-# pennyrun-api.service reads to require it. Prefixed with "-" because
-# scan() already treats a missing token as "don't upload, just write
-# clearance.json" (tested) -- a missing/unreadable token file must not
-# stop the scan itself from running.
-Environment=PENNYRUN_API=https://$HOST
-EnvironmentFile=-$INGEST_ENV
+# nothing for this unit. Wired here instead: PENNYRUN_API (\$API_URL, set
+# above) defaults to the host this box itself serves (its own API,
+# through Caddy's reverse proxy) but honours an explicit PENNYRUN_API in
+# this script's own environment -- see the comment above \$API_URL. The
+# ingest credential line (\$INGEST_LINE, just above) follows the same
+# rule for the token.
+Environment=PENNYRUN_API=$API_URL
+$INGEST_LINE
 # The scan refuses to overwrite the list on a bad run, so a failure here
 # leaves yesterday's data serving rather than emptying the app. It does
 # not depend on pennyrun-discover.service succeeding first -- a blocked
@@ -403,7 +458,21 @@ WantedBy=timers.target
 EOF
 
 systemctl daemon-reload
-systemctl enable --now pennyrun-discover.timer pennyrun-scan.timer pennyrun-harvest.timer >/dev/null
+# discover/scan are only ever enabled on a host the SWEEPABLE check above
+# found reachable -- a BLOCKED or UNKNOWN host would otherwise fire
+# ~3,750 refused discover chunks plus ~408 refused scan chunks at Home
+# Depot every night, forever, against a service whose terms are already
+# being stretched, for a run that can never produce a hit. The units are
+# always written (harvest's weekly pool rebuild is unaffected either
+# way), just not started, so enabling them later is one command away
+# once the situation actually changes -- see the SWEEPABLE=no message
+# above for the exact command.
+if [ "$SWEEPABLE" = "yes" ]; then
+	systemctl enable --now pennyrun-discover.timer pennyrun-scan.timer pennyrun-harvest.timer >/dev/null
+else
+	systemctl enable --now pennyrun-harvest.timer >/dev/null
+	say "pennyrun-discover.timer and pennyrun-scan.timer are installed but NOT enabled (see above)"
+fi
 
 # ---------------------------------------------------------------- done
 
@@ -411,6 +480,9 @@ echo
 say "serving https://$HOST"
 echo "    the certificate takes a few seconds on the first request"
 echo
+if [ "$SWEEPABLE" = "no" ]; then
+	echo "    enable the sweep    sudo systemctl enable --now pennyrun-discover.timer pennyrun-scan.timer"
+fi
 echo "    scan now        sudo systemctl start pennyrun-scan.service"
 echo "    discover now    sudo systemctl start pennyrun-discover.service"
 echo "    watch it        journalctl -u pennyrun-scan -f"

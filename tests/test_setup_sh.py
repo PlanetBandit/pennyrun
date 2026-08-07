@@ -80,11 +80,82 @@ def test_scan_gets_a_default_api_url_and_the_ingest_token():
     text = _read()
     scan = _unit_block("pennyrun-scan.service", text)
 
-    assert "Environment=PENNYRUN_API=https://$HOST" in scan
+    assert re.search(r'^API_URL="\$\{PENNYRUN_API:-https://\$HOST\}"$', text, re.M)
+    assert "Environment=PENNYRUN_API=$API_URL" in scan
+
     # "-" prefix: a missing/unreadable token file must not stop the scan
     # itself (and clearance.json) from running -- scan() already treats a
     # missing token as "don't upload", tested in test_sweep_upload.py.
-    assert re.search(r"^EnvironmentFile=-\$INGEST_ENV$", scan, re.M)
+    assert re.search(r'^\tINGEST_LINE="EnvironmentFile=-\$INGEST_ENV"$', text, re.M)
+    assert "$INGEST_LINE" in scan
+
+
+def test_setup_sh_honours_an_external_api_url_and_ingest_token():
+    """CRITICAL 1 of the branch review: the deploy kit only supported the
+    topology the architecture proves impossible -- running setup.sh on
+    the droplet pointed its own scan timer at itself, with no way to aim
+    a collector at a *different* droplet. PENNYRUN_API and
+    PENNYRUN_INGEST_TOKEN, when present in setup.sh's own environment,
+    must override the self-referential defaults so a home box can point
+    its scan timer at a droplet that actually serves the API."""
+    text = _read()
+
+    assert re.search(
+        r'API_URL="\$\{PENNYRUN_API:-https://\$HOST\}"', text), \
+        "PENNYRUN_API must override the https://$HOST default when set"
+
+    assert re.search(
+        r'if \[ -n "\$\{PENNYRUN_INGEST_TOKEN:-\}" \]; then', text), \
+        "an explicit PENNYRUN_INGEST_TOKEN must be honoured, not just the local file"
+    assert 'INGEST_LINE="Environment=PENNYRUN_INGEST_TOKEN=$PENNYRUN_INGEST_TOKEN"' in text
+
+
+def test_sweep_timers_are_gated_on_sweepable():
+    """CRITICAL 2 of the branch review: a BLOCKED or UNKNOWN host used to
+    get pennyrun-discover.timer and pennyrun-scan.timer enabled
+    unconditionally -- ~3,750 refused discover chunks plus ~408 refused
+    scan chunks fired at Home Depot every night, forever, from a host
+    that can never produce a hit. The units must still be written either
+    way (so enabling them later is one command, not a re-run of this
+    script) but only *enabled* when SWEEPABLE=yes."""
+    text = _read()
+    m = re.search(
+        r'systemctl daemon-reload\n(?:#.*\n)*if \[ "\$SWEEPABLE" = "yes" \]; then\n'
+        r'(.*?)\nelse\n(.*?)\nfi\n', text, re.S)
+    assert m, "expected discover/scan timer enablement gated on SWEEPABLE"
+    yes_body, no_body = m.groups()
+
+    assert "systemctl enable --now pennyrun-discover.timer pennyrun-scan.timer pennyrun-harvest.timer" in yes_body
+
+    # harvest is unaffected either way -- only discover/scan are gated
+    enable_line = next(l for l in no_body.splitlines() if l.strip().startswith("systemctl enable --now"))
+    assert "pennyrun-harvest.timer" in enable_line
+    assert "pennyrun-discover.timer" not in enable_line
+    assert "pennyrun-scan.timer" not in enable_line
+
+    # the units themselves are still written before this point, whether
+    # or not they end up enabled
+    assert text.index("write_unit pennyrun-discover.service") < text.index(m.group(0))
+    assert text.index("write_unit pennyrun-scan.service") < text.index(m.group(0))
+
+
+def test_checkhost_blocked_and_unknown_are_narrated_differently():
+    """A ledger item from the review: checkhost has three outcomes (0
+    GOOD, 1 BLOCKED, 2 UNKNOWN), and narrating any non-zero exit as
+    'refused' sends a local TLS/network problem (UNKNOWN) down the same
+    road as a genuine Home Depot refusal (BLOCKED) -- exactly the
+    confusion checkhost.py's own verdict() exists to prevent. setup.sh
+    must capture and branch on the real exit code, and the old "will
+    start working by itself" reassurance -- false for a datacentre
+    address, which does not self-heal -- must be gone."""
+    text = _read()
+
+    assert re.search(r'\|\|\s*CHECK_STATUS=\$\?', text), \
+        "expected the real checkhost exit code to be captured, not just pass/fail"
+    assert re.search(r'if \[ "\$CHECK_STATUS" = "1" \]; then', text)
+    assert "BLOCKED" in text
+    assert "UNKNOWN" in text
+    assert "will start working by itself" not in text
 
 
 def test_old_combined_sweep_unit_is_retired_before_new_units_are_installed():

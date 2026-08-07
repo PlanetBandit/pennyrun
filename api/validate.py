@@ -44,6 +44,22 @@ different reason: it isn't a key, but it's the phone display for
 `/store/{id}/clearance` and `/item/{id}`, and an unescaped `\n` or other
 control character there is a display bug (or a log-forging trick) that
 we'd otherwise be trusting the collector never to send.
+
+`check()` returns the parsed, sanitised fields rather than just
+validating in place and discarding the result. Two things depend on
+that:
+
+- Money must never touch `float`. `list_price`/`clearance_price`/
+  `pct_off` come back as the exact `Decimal` this module already built to
+  do the bounds checks above -- `api/ingest.py` inserts that `Decimal`
+  straight into `numeric(10,2)`/`numeric(5,2)` rather than re-parsing (or
+  worse, letting a caller's raw `float` survive) the same string twice.
+- The catalogue string fields (`category`, `canonical_url`, `upc`,
+  `store_sku`, `model_number`, `replacement_id`) are bounded the same way
+  `name` is -- length-capped and control-character-free -- and a bare
+  empty string is normalised to `None` here so it can never win a
+  `coalesce(excluded.x, product.x)` upsert against a real value already
+  on file the way a genuine `NULL` is designed to lose.
 """
 import re
 from decimal import Decimal, InvalidOperation
@@ -54,6 +70,9 @@ MIN_PRICE = Decimal("0.01")
 ID_MAX_LEN = 64
 ID_RE = re.compile(r"[A-Za-z0-9_-]+")
 NAME_MAX_LEN = 200
+CATEGORY_MAX_LEN = 64
+URL_MAX_LEN = 300
+CATALOG_FIELD_MAX_LEN = 64  # upc / store_sku / model_number / replacement_id
 CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f\x7f]")
 
 
@@ -75,6 +94,25 @@ def _identifier(raw, field):
     return raw
 
 
+def _bounded_text(raw, field, max_len):
+    """Same treatment as `name`: length-capped, no control characters.
+
+    An empty string is treated as "not sent" (`None`), not as a value --
+    otherwise it would beat a real, already-stored value in the
+    `coalesce(excluded.x, product.x)` upsert `api/ingest.py` and
+    `db/seed.py` both use for these fields.
+    """
+    if raw == "":
+        return None
+    if raw is None:
+        return None
+    if not isinstance(raw, str) or len(raw) > max_len:
+        raise ValueError(f"{field} is not valid: {raw!r}")
+    if CONTROL_CHAR_RE.search(raw):
+        raise ValueError(f"{field} contains control characters: {raw!r}")
+    return raw
+
+
 def check(obs):
     for required in ("item_id", "store_id"):
         value = obs.get(required)
@@ -82,12 +120,16 @@ def check(obs):
             raise ValueError(f"{required} is required")
         _identifier(value, required)
 
-    name = obs.get("name")
-    if name is not None:
-        if not isinstance(name, str) or len(name) > NAME_MAX_LEN:
-            raise ValueError(f"name is not valid: {name!r}")
-        if CONTROL_CHAR_RE.search(name):
-            raise ValueError(f"name contains control characters: {name!r}")
+    item_id = obs["item_id"]
+    store_id = obs["store_id"]
+
+    name = _bounded_text(obs.get("name"), "name", NAME_MAX_LEN)
+    category = _bounded_text(obs.get("category"), "category", CATEGORY_MAX_LEN)
+    canonical_url = _bounded_text(obs.get("canonical_url"), "canonical_url", URL_MAX_LEN)
+    upc = _bounded_text(obs.get("upc"), "upc", CATALOG_FIELD_MAX_LEN)
+    store_sku = _bounded_text(obs.get("store_sku"), "store_sku", CATALOG_FIELD_MAX_LEN)
+    model_number = _bounded_text(obs.get("model_number"), "model_number", CATALOG_FIELD_MAX_LEN)
+    replacement_id = _bounded_text(obs.get("replacement_id"), "replacement_id", CATALOG_FIELD_MAX_LEN)
 
     clearance = obs.get("clearance_price")
     listed = obs.get("list_price")
@@ -98,6 +140,7 @@ def check(obs):
     # would ever run it through `_money`.
     listed_d = _money(listed, "list_price") if listed is not None else None
 
+    clearance_d = None
     if clearance is not None:
         c = _money(clearance, "clearance_price")
         if c < MIN_PRICE:
@@ -106,14 +149,18 @@ def check(obs):
             raise ValueError(f"clearance_price above {MAX_PRICE}: {c}")
         if listed_d is not None and c > listed_d:
             raise ValueError("clearance_price above list price")
+        clearance_d = c
 
     pct = obs.get("pct_off")
+    pct_d = None
     if pct is not None:
         p = _money(pct, "pct_off")
         if not (0 <= p <= 100):
             raise ValueError(f"pct_off outside 0-100 percent: {p}")
+        pct_d = p
 
     qty = obs.get("quantity")
+    q = None
     if qty is not None:
         try:
             q = int(qty)
@@ -121,3 +168,12 @@ def check(obs):
             raise ValueError(f"quantity is not a number: {qty!r}")
         if q < 0:
             raise ValueError(f"negative quantity: {qty}")
+
+    return {
+        "item_id": item_id, "store_id": store_id, "name": name,
+        "category": category, "canonical_url": canonical_url, "upc": upc,
+        "store_sku": store_sku, "model_number": model_number,
+        "replacement_id": replacement_id,
+        "list_price": listed_d, "clearance_price": clearance_d,
+        "pct_off": pct_d, "quantity": q,
+    }

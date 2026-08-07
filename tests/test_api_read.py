@@ -27,7 +27,7 @@ def client(test_schema):
     conn.commit()
 
     migrate.apply(conn)
-    seed.stores(conn, "pennyrun/hd-stores.json")
+    seed.stores(conn, "pennyrun/hd-stores.json", "pennyrun/stores.json")
     seed.products(conn, "pennyrun/clearance.json")
     with conn.cursor() as cur:
         cur.execute(
@@ -64,12 +64,23 @@ def test_stores_requires_zip_or_latlon(client):
     assert r.status_code == 400
 
 
-def test_stores_by_latlon_excludes_a_store_missing_lon(test_schema, client):
+def test_stores_by_latlon_returns_real_stores_and_excludes_one_missing_lon(test_schema, client):
     """`lat is not null` alone lets a row with `lat` set and `lon` NULL
     through -- NULL propagates so `miles` comes back NULL rather than
     raising, and the row is returned (sorted last) as a store with no
     distance. `where lat is not null and lon is not null` is what keeps
     it out.
+
+    This used to be the whole test, and it passed trivially: nothing in
+    the codebase wrote real coordinates onto any of the 2,021 seeded
+    stores, so the geo branch returned `[]` unconditionally and a
+    half-coordinate row was "excluded" the same way every other row was.
+    `db/seed.py`'s `stores()` now backfills lat/lon from
+    `pennyrun/stores.json` by zip match for the ~91% of stores whose zip
+    is unambiguous on both sides -- store 2502 (White Marsh, zip 21220)
+    is one of them (`(39.35902, -76.44301)`) -- so asserting it comes
+    back from a real geo lookup is what actually proves the endpoint
+    works, not just that one synthetic bad row is filtered.
     """
     from db import migrate
 
@@ -88,9 +99,12 @@ def test_stores_by_latlon_excludes_a_store_missing_lon(test_schema, client):
         conn.commit()
 
         try:
-            r = client.get("/api/v1/stores?lat=39.4&lon=-76.6&n=50")
+            r = client.get("/api/v1/stores?lat=39.35902&lon=-76.44301&n=50")
             assert r.status_code == 200
-            assert not any(s["store_id"] == "9001" for s in r.json())
+            body = r.json()
+            assert any(s["store_id"] == "2502" for s in body), \
+                "a store with real seeded coordinates must come back from a geo lookup"
+            assert not any(s["store_id"] == "9001" for s in body)
         finally:
             with conn.cursor() as cur:
                 cur.execute("delete from store where store_id = '9001'")
