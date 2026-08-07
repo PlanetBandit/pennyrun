@@ -36,7 +36,8 @@ def stores(zip: str | None = None, lat: float | None = None,
                 "  3959 * acos(greatest(-1, least(1, "
                 "    cos(radians(%s))*cos(radians(lat))*cos(radians(lon)-radians(%s))"
                 "    + sin(radians(%s))*sin(radians(lat))))) as miles "
-                "from store where lat is not null order by miles limit %s",
+                "from store where lat is not null and lon is not null "
+                "order by miles limit %s",
                 (lat, lon, lat, n))
         else:
             raise HTTPException(400, "give a zip, or lat and lon")

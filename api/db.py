@@ -21,17 +21,30 @@ Two deliberate departures from a naive port of `db.migrate`:
   read API's job is to hand that value to a phone without ever routing it
   through a float, so it converts to the exact same text Postgres would
   print, at the row-fetch boundary, once, for every endpoint at once.
+  This is global and type-based, not per-column, so it is a trap as well
+  as a fix: any future endpoint that does server-side arithmetic on a
+  money column (a sum, an average) will get a `str` back from `rows()`,
+  not a `Decimal` -- fine for today's read-only passthrough endpoints,
+  not fine the day someone adds the first aggregate query.
 
 `PENNYRUN_DB_SCHEMA` is not part of the production interface -- it exists
 so tests running inside an isolated Postgres schema (see
 `tests/conftest.py`) can make the API's own connections see that schema
 too, without leaking a test-only knob into `api/main.py`'s endpoint code.
+It is only ever set by the API process's own environment, never by a
+request, but it still goes through `psycopg.sql.Identifier` rather than
+an f-string: `SET search_path` has no bind-parameter form for an
+identifier, and an env-derived string landing in raw SQL is exactly the
+shape that turns exploitable the day something else starts writing that
+variable -- this module is about to be shared with Task 8's write
+endpoints.
 """
 from contextlib import contextmanager
 from decimal import Decimal
 import os
 
 import psycopg
+from psycopg import sql
 from psycopg.rows import dict_row
 
 from db.migrate import db_url
@@ -53,5 +66,5 @@ def rows():
         with conn.cursor() as cur:
             schema = os.environ.get("PENNYRUN_DB_SCHEMA")
             if schema:
-                cur.execute(f"set search_path to {schema}")
+                cur.execute(sql.SQL("set search_path to {}").format(sql.Identifier(schema)))
             yield cur

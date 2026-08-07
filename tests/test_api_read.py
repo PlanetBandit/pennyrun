@@ -64,6 +64,41 @@ def test_stores_requires_zip_or_latlon(client):
     assert r.status_code == 400
 
 
+def test_stores_by_latlon_excludes_a_store_missing_lon(test_schema, client):
+    """`lat is not null` alone lets a row with `lat` set and `lon` NULL
+    through -- NULL propagates so `miles` comes back NULL rather than
+    raising, and the row is returned (sorted last) as a store with no
+    distance. `where lat is not null and lon is not null` is what keeps
+    it out.
+    """
+    from db import migrate
+
+    # `test_schema` is the shared, session-scoped schema every test module
+    # seeds into (tests/conftest.py) -- test_seed.py asserts an exact row
+    # count against it later in the session, so this synthetic row must
+    # not outlive this test.
+    conn = migrate.connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"set search_path to {test_schema}")
+            cur.execute(
+                "insert into store (store_id, name, street, city, state, zip, lat, lon) "
+                "values ('9001','Half Coords','1 Test Rd','Testville','MD','00000',39.4,null) "
+                "on conflict (store_id) do update set lat = excluded.lat, lon = excluded.lon")
+        conn.commit()
+
+        try:
+            r = client.get("/api/v1/stores?lat=39.4&lon=-76.6&n=50")
+            assert r.status_code == 200
+            assert not any(s["store_id"] == "9001" for s in r.json())
+        finally:
+            with conn.cursor() as cur:
+                cur.execute("delete from store where store_id = '9001'")
+            conn.commit()
+    finally:
+        conn.close()
+
+
 def test_store_clearance_returns_the_seeded_row(client):
     r = client.get("/api/v1/store/2502/clearance?limit=50")
     assert r.status_code == 200
@@ -81,6 +116,43 @@ def test_item_cross_store_compare(client):
     prices = {p["store_id"]: p for p in body["prices"]}
     assert prices["2502"]["clearance_price"] == "1.20"
     assert "observed_at" in prices["2502"], "staleness must be visible to the phone"
+
+
+def test_schema_env_var_is_quoted_as_a_single_identifier_not_interpolated_as_sql(
+        monkeypatch, client):
+    """`PENNYRUN_DB_SCHEMA` reaches `SET search_path` through
+    `psycopg.sql.Identifier`, not an f-string. A schema name containing a
+    quote and a semicolon -- the classic "close the string, inject a
+    statement" shape -- proves it: built with an f-string,
+    `f"set search_path to {schema}"` would send
+    `set search_path to sneaky; drop table observation; --` as one
+    multi-statement query and the second statement would actually run.
+    `sql.Identifier` folds the whole string into a single (nonexistent)
+    quoted identifier instead, so nothing after the semicolon ever
+    executes as a separate statement.
+    """
+    from api.db import rows
+
+    malicious = 'sneaky"; drop table observation; --'
+    # Scoped so PENNYRUN_DB_SCHEMA is back to the real test schema before
+    # the client.get() below -- monkeypatch.setenv alone only reverts at
+    # test teardown, which is too late to check the API still works.
+    with monkeypatch.context() as m:
+        m.setenv("PENNYRUN_DB_SCHEMA", malicious)
+        with rows() as cur:
+            cur.execute("show search_path")
+            raw = cur.fetchone()["search_path"]
+    # A double-quoted identifier: strip the outer quotes and undo the
+    # `""` -> `"` escaping to recover exactly the string we set it to --
+    # proof the whole thing was treated as one identifier, not SQL text.
+    assert raw.startswith('"') and raw.endswith('"')
+    assert raw[1:-1].replace('""', '"') == malicious
+
+    # And nothing was actually dropped: the row the `client` fixture
+    # seeded into the real test schema is still there.
+    r = client.get("/api/v1/store/2502/clearance?limit=50")
+    assert r.status_code == 200
+    assert r.json()[0]["item_id"] == "204767783"
 
 
 def test_lookup_by_upc(client):
