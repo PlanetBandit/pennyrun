@@ -2,3 +2,6 @@
 __pycache__/
 .pytest_cache/
 .env.test
+.env.collector
+.collector-data/
+.collector-test/
