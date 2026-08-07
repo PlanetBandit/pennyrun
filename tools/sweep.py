@@ -57,7 +57,7 @@ ROOT = os.path.dirname(HERE)
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from tools import hdclient
+from tools import gate, hdclient
 
 # On a server the checkout has to stay pristine or every deploy turns into
 # a merge conflict with last night's sweep. Point PENNYRUN_DATA somewhere
@@ -227,6 +227,10 @@ def in_batches(ids, fn):
             seen.add(i)
             deduped.append(i)
     chunks = [deduped[i:i + BATCH] for i in range(0, len(deduped), BATCH)]
+    # every chunk is one request to Home Depot; counted here so the shared
+    # budget reflects what actually went out rather than an estimate
+    global _REQUESTS
+    _REQUESTS += len(chunks)
 
     def safe(chunk):
         try:
@@ -783,10 +787,35 @@ def probe():
 
 STAGES = {"harvest": harvest, "discover": discover, "scan": scan, "probe": probe}
 
+
+def _gated(name, fn):
+    """Run a stage holding the one Home Depot door, charging the shared budget.
+
+    Wrapped at dispatch rather than inside each stage so a stage added later
+    cannot forget -- and so `probe`, which is three requests and a diagnosis,
+    is deliberately left out of both.
+    """
+    if name == "probe":
+        return fn()
+    budget = gate.shared_budget()
+    with gate.exclusive("sweep." + name):
+        before = _requests_made()
+        try:
+            return fn()
+        finally:
+            budget.record(max(0, _requests_made() - before))
+
+
+_REQUESTS = 0
+
+
+def _requests_made():
+    return _REQUESTS
+
 if __name__ == "__main__":
     wanted = sys.argv[1:] or ["scan"]
     for name in wanted:
         if name not in STAGES:
             die("unknown stage %r (want %s)" % (name, ", ".join(STAGES)))
     for name in wanted:
-        STAGES[name]()
+        _gated(name, STAGES[name])

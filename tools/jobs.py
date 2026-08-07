@@ -31,103 +31,15 @@ ROOT = os.path.dirname(HERE)
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from tools import hdclient, sweep, upload
+from tools import gate, hdclient, sweep, upload
 
-# Requests allowed in any rolling window. The wall was ~2,350 in one window;
-# this leaves roughly half of that as headroom, and at ~81 requests per store
-# still allows ~14 stores an hour -- more than a metro's worth of demand.
-BUDGET = int(os.environ.get("PENNYRUN_JOB_BUDGET", "1200"))
-WINDOW = int(os.environ.get("PENNYRUN_JOB_WINDOW", "3600"))
 POLL_SECONDS = int(os.environ.get("PENNYRUN_JOB_POLL", "20"))
 
 
-class Budget:
-    """A rolling cap on requests, shared across every job this process runs.
-
-    Deliberately not a token bucket: the thing being modelled is "how many
-    requests has this address made recently", which is a count over a window,
-    and a bucket's refill rate would let a long quiet spell bank enough credit
-    to fire a burst that looks exactly like the one that got us blocked.
-    """
-
-    def __init__(self, cap=BUDGET, window=WINDOW, clock=time.time, path=None):
-        self.cap = cap
-        self.window = window
-        self._clock = clock
-        self._spends = deque()          # (timestamp, count)
-        # Persisted, because an in-memory window is not a budget: `--once` from
-        # cron would start empty every five minutes, and the crashes that reset
-        # it are exactly the ones that follow heavy traffic.
-        self.path = path
-        self._load()
-
-    def _load(self):
-        if not self.path or not os.path.exists(self.path):
-            return
-        try:
-            with open(self.path) as f:
-                for ts, n in json.load(f):
-                    self._spends.append((float(ts), int(n)))
-        except Exception:
-            pass                        # a corrupt ledger must not stop the run
-        self._prune(self._clock())
-
-    def _save(self):
-        if not self.path:
-            return
-        try:
-            tmp = self.path + ".tmp"
-            with open(tmp, "w") as f:
-                json.dump([[ts, n] for ts, n in self._spends], f)
-            os.replace(tmp, self.path)
-        except OSError:
-            pass
-
-    def _prune(self, now):
-        while self._spends and self._spends[0][0] <= now - self.window:
-            self._spends.popleft()
-
-    def spent(self):
-        now = self._clock()
-        self._prune(now)
-        return sum(n for _, n in self._spends)
-
-    def remaining(self):
-        return max(0, self.cap - self.spent())
-
-    def record(self, n):
-        if n > 0:
-            self._spends.append((self._clock(), n))
-            self._save()
-
-    def wait_for(self, n):
-        """Seconds until `n` more requests would fit under the cap. 0 if now.
-
-        A job larger than the whole cap would wait forever, so it is allowed
-        through once the window is empty rather than deadlocking the queue --
-        with the cap at 1,200 and a store at ~81 this cannot happen today, but
-        a future caller with a bigger unit of work should not silently hang.
-        """
-        now = self._clock()
-        self._prune(now)
-        if n >= self.cap:
-            # the LAST spend, not the first: waiting only for the oldest would
-            # admit an oversized job on top of nearly a full window, which is
-            # the one thing this class exists to prevent
-            return 0.0 if not self._spends else max(
-                0.0, self._spends[-1][0] + self.window - now)
-        running = sum(c for _, c in self._spends)
-        if running + n <= self.cap:
-            return 0.0
-        # drop the oldest spends until the new request fits
-        freed, wait = 0, 0.0
-        for ts, c in self._spends:
-            freed += c
-            wait = ts + self.window - now
-            if running - freed + n <= self.cap:
-                break
-        return max(0.0, wait)
-
+# The budget and the lock both live in tools/gate.py now, because a
+# per-feature cap is not a cap: the nightly scan spends ~1,155 requests and
+# knew nothing about this loop's, and between them they could reach the wall.
+Budget = gate.Budget
 
 def say(msg):
     print("jobs: " + msg, flush=True)
@@ -221,8 +133,14 @@ def run_one(job, budget, base, token):
         budget.record(need)
 
         before = sweep.previous_prices()
-        rows, refused_rate, unreachable_rate = sweep.price_at(
-            sid, sid, hot_ids, meta, before)
+        # One caller at a time. Blocking on purpose: a job that arrives during
+        # the nightly scan should wait its turn rather than run alongside it --
+        # two callers at twenty workers each from one address is the traffic
+        # that got this address cut off. Held around the pricing only, so a
+        # long-running loop never starves the nightly sweep.
+        with gate.exclusive("jobs.store." + str(sid)):
+            rows, refused_rate, unreachable_rate = sweep.price_at(
+                sid, sid, hot_ids, meta, before)
 
         # "They refused us" and "we had no network" need different answers, and
         # collapsing them is what let an all-unreachable job report `done` and
@@ -269,13 +187,8 @@ def run_one(job, budget, base, token):
         return False
 
 
-def budget_path():
-    """Beside the other sweep state, so PENNYRUN_DATA moves it too."""
-    return os.path.join(sweep.DATA, "request_budget.json")
-
-
 def loop(base, token, once=False, budget=None):
-    budget = budget or Budget(path=budget_path())
+    budget = budget or gate.shared_budget()
     collector = socket.gethostname()
     say("working the queue at %s as %s (cap %d req / %dm)"
         % (base, collector, budget.cap, budget.window // 60))

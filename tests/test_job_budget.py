@@ -8,7 +8,10 @@ job at a time.
 """
 import pytest
 
-from tools.jobs import Budget
+# Budget lives in tools/gate.py now -- shared by sweep and jobs, because a
+# per-feature cap is not a cap. Imported via jobs to also pin the alias.
+from tools.gate import Budget
+from tools import jobs
 
 
 class Clock:
@@ -100,8 +103,19 @@ def test_recording_zero_is_a_no_op():
     assert b.spent() == 0
 
 
+# Measured 2026-08-07: this address was refused after roughly this many
+# requests in one window. Named here so the assertion below is about the
+# measurement rather than restating the constant it is checking.
+MEASURED_WALL = 2350
+REQUESTS_PER_STORE = 81
+
+
 def test_the_default_cap_leaves_real_headroom_under_the_measured_wall():
-    """1,200 against a wall measured at ~2,350, at ~81 requests per store."""
-    b = Budget()
-    assert b.cap <= 1500, "the default cap is too close to the measured wall"
-    assert b.cap // 81 >= 10, "the default cap is too tight to serve a metro"
+    b = Budget(cap=Budget.__init__.__defaults__[0])   # the code's default, not the env's
+    assert b.cap <= MEASURED_WALL * 0.7, (
+        f"cap {b.cap} is within 30% of the wall at {MEASURED_WALL}")
+    assert b.cap // REQUESTS_PER_STORE >= 10, "too tight to serve a metro"
+
+
+def test_jobs_still_exposes_Budget_for_callers_that_import_it_there():
+    assert jobs.Budget is Budget
