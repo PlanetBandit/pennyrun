@@ -490,6 +490,22 @@ def scan():
         % (len(hits), len(stores), (time.time() - t0) / 60,
            sum(1 for r in hits if r[14] is not None)))
 
+    # clearance.json is already written above -- collection succeeding and
+    # delivery to the droplet succeeding are different events, so an upload
+    # failure here must never look like the scan itself failed. Only
+    # attempted when both are set: a home box with no PENNYRUN_API just
+    # writes clearance.json and stops, same as before this existed.
+    base = os.environ.get("PENNYRUN_API")
+    token = os.environ.get("PENNYRUN_INGEST_TOKEN")
+    if base and token:
+        from tools import upload
+        try:
+            got = upload.send(hits, base, token)
+        except Exception as e:
+            say("upload failed: %s -- clearance.json was still written" % e)
+        else:
+            say("uploaded: %d accepted, %d rejected" % (got["accepted"], got["rejected"]))
+
 
 def pick(hits):
     """Choose the rows to ship.

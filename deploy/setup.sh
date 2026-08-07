@@ -28,7 +28,7 @@ say() { echo "==> $*"; }
 say "installing packages"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq curl git python3 debian-keyring debian-archive-keyring apt-transport-https
+apt-get install -y -qq curl git python3 python3-venv debian-keyring debian-archive-keyring apt-transport-https
 
 if ! command -v caddy >/dev/null; then
 	say "installing caddy"
@@ -57,6 +57,18 @@ else
 fi
 git config --global --add safe.directory "$DIR"
 
+# curl_cffi (and everything else the sweep and the read API import) is not
+# in the standard library, and nothing was ever installing it -- the
+# sweep's systemd units used to point straight at /usr/bin/python3, which
+# has never seen these packages. A venv, installed once here and reused by
+# every unit below, is what makes `import curl_cffi` not fail at 5am.
+say "python virtualenv"
+if [ ! -x "$DIR/.venv/bin/python" ]; then
+	python3 -m venv "$DIR/.venv"
+fi
+"$DIR/.venv/bin/pip" install -q --upgrade pip
+"$DIR/.venv/bin/pip" install -q -r "$DIR/tools/requirements.txt"
+
 # Sweep state lives here, outside git, so a deploy is always a clean
 # fast-forward and never a conflict with last night's data.
 say "data directory $DATA"
@@ -74,7 +86,7 @@ fi
 
 say "checking whether this machine can reach Home Depot"
 SWEEPABLE=yes
-python3 "$DIR/tools/checkhost.py" || SWEEPABLE=no
+(cd "$DIR" && "$DIR/.venv/bin/python" -m tools.checkhost) || SWEEPABLE=no
 if [ "$SWEEPABLE" = "no" ]; then
 	echo
 	echo "    The site will still serve. The nightly timer is installed and"
@@ -112,13 +124,50 @@ fi
 
 # ---------------------------------------------------------------- the sweep
 
-say "installing timers (sweep ${HOUR}:10 daily, harvest Sundays 04:10)"
+say "installing timers (discover ${HOUR}:00, scan ${HOUR}:10, harvest Sundays 04:10)"
 
 write_unit() { cat > "/etc/systemd/system/$1"; }
 
-write_unit pennyrun-sweep.service <<EOF
+# discover() and scan() used to run as one unit ("discover scan" in a
+# single ExecStart). discover() now die()s -- exits non-zero -- the moment
+# Home Depot challenges the sitemap, which is a live, ordinary occurrence,
+# not a bug; with both stages in one process that exit kills scan() too,
+# even though scan() prices the pool against a completely different set of
+# hosts and is unaffected by a blocked sitemap. Separate units mean a
+# blocked discover() only means the hot list didn't grow tonight -- it can
+# no longer take the whole night's data down with it.
+write_unit pennyrun-discover.service <<EOF
 [Unit]
-Description=Penny Run nightly clearance sweep
+Description=Penny Run nightly catalogue discovery
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=$RUN_AS
+WorkingDirectory=$DIR
+Environment=PENNYRUN_DATA=$DATA
+ExecStart=$DIR/.venv/bin/python -m tools.sweep discover
+TimeoutStartSec=5400
+Nice=10
+EOF
+
+write_unit pennyrun-discover.timer <<EOF
+[Unit]
+Description=Walk the next slice of the sitemap before the doors open
+
+[Timer]
+OnCalendar=*-*-* ${HOUR}:00:00
+Persistent=true
+RandomizedDelaySec=120
+
+[Install]
+WantedBy=timers.target
+EOF
+
+write_unit pennyrun-scan.service <<EOF
+[Unit]
+Description=Penny Run nightly clearance scan
 After=network-online.target
 Wants=network-online.target
 
@@ -129,15 +178,18 @@ WorkingDirectory=$DIR
 Environment=PENNYRUN_DATA=$DATA
 Environment=PENNYRUN_OUT=$DATA/clearance.json
 # The scan refuses to overwrite the list on a bad run, so a failure here
-# leaves yesterday's data serving rather than emptying the app.
-ExecStart=/usr/bin/python3 $DIR/tools/sweep.py discover scan
+# leaves yesterday's data serving rather than emptying the app. It does
+# not depend on pennyrun-discover.service succeeding first -- a blocked
+# sitemap only means the hot list didn't grow tonight, not that the pool
+# can't be priced.
+ExecStart=$DIR/.venv/bin/python -m tools.sweep scan
 TimeoutStartSec=5400
 Nice=10
 EOF
 
-write_unit pennyrun-sweep.timer <<EOF
+write_unit pennyrun-scan.timer <<EOF
 [Unit]
-Description=Sweep Home Depot before the doors open
+Description=Price the pool and hot list before the doors open
 
 [Timer]
 OnCalendar=*-*-* ${HOUR}:10:00
@@ -159,7 +211,7 @@ Type=oneshot
 User=$RUN_AS
 WorkingDirectory=$DIR
 Environment=PENNYRUN_DATA=$DATA
-ExecStart=/usr/bin/python3 $DIR/tools/sweep.py harvest
+ExecStart=$DIR/.venv/bin/python -m tools.sweep harvest
 TimeoutStartSec=3600
 Nice=10
 EOF
@@ -178,7 +230,7 @@ WantedBy=timers.target
 EOF
 
 systemctl daemon-reload
-systemctl enable --now pennyrun-sweep.timer pennyrun-harvest.timer >/dev/null
+systemctl enable --now pennyrun-discover.timer pennyrun-scan.timer pennyrun-harvest.timer >/dev/null
 
 # ---------------------------------------------------------------- done
 
@@ -186,8 +238,9 @@ echo
 say "serving https://$HOST"
 echo "    the certificate takes a few seconds on the first request"
 echo
-echo "    sweep now       sudo systemctl start pennyrun-sweep.service"
-echo "    watch it        journalctl -u pennyrun-sweep -f"
+echo "    scan now        sudo systemctl start pennyrun-scan.service"
+echo "    discover now    sudo systemctl start pennyrun-discover.service"
+echo "    watch it        journalctl -u pennyrun-scan -f"
 echo "    next run        systemctl list-timers 'pennyrun-*'"
 echo "    deploy a build  sudo bash $DIR/deploy/update.sh"
 echo

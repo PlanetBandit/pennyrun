@@ -12,8 +12,17 @@ their whole address range. DigitalOcean may or may not be. Ask from the
 droplet:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/PlanetBandit/pennyrun/main/tools/checkhost.py | python3 -
+git clone --depth 1 https://github.com/PlanetBandit/pennyrun.git /tmp/pennyrun-check
+cd /tmp/pennyrun-check
+python3 -m venv .venv && .venv/bin/pip install -q -r tools/requirements.txt
+.venv/bin/python -m tools.checkhost
 ```
+
+(`curl ... | python3 -` cannot work here: `tools/checkhost.py` does
+`from tools import hdclient`, a package-relative import that needs the
+repo's directory layout on disk, and needs `curl_cffi` installed to speak
+to Home Depot's pricing API at all. Piping the one file's text into a
+stdin interpreter gives it neither.)
 
 `GOOD` means everything below works. `BLOCKED` means the droplet can
 still serve the site perfectly well, but the sweep has to run somewhere
@@ -47,10 +56,15 @@ git clone https://github.com/PlanetBandit/pennyrun.git /tmp/pennyrun
 sudo PENNYRUN_HOST=pennyrun.example.duckdns.org bash /tmp/pennyrun/deploy/setup.sh
 ```
 
-It installs Caddy and Python, clones the repo to `/opt/pennyrun`, checks
-whether the host can reach Home Depot, serves the app over HTTPS, and
-installs two timers: the sweep nightly at 05:10 and the pool harvest on
-Sundays at 04:10. Re-running it is safe.
+It installs Caddy and Python, creates a virtualenv and installs
+`tools/requirements.txt` into it, clones the repo to `/opt/pennyrun`,
+checks whether the host can reach Home Depot, serves the app over HTTPS,
+and installs three timers: catalogue discovery nightly at 05:00, the
+clearance scan nightly at 05:10, and the pool harvest on Sundays at
+04:10. Discovery and the scan are separate systemd units on purpose — a
+sitemap that Home Depot is challenging tonight makes `discover` exit
+non-zero, and that must never take the scan down with it. Re-running it
+is safe.
 
 Knobs, all optional:
 
@@ -65,10 +79,11 @@ Knobs, all optional:
 ## Day to day
 
 ```bash
-sudo systemctl start pennyrun-sweep.service   # sweep right now
-journalctl -u pennyrun-sweep -f               # watch it
-systemctl list-timers 'pennyrun-*'            # when is the next one
-sudo bash /opt/pennyrun/deploy/update.sh      # deploy a new build
+sudo systemctl start pennyrun-scan.service      # scan right now
+sudo systemctl start pennyrun-discover.service  # discover right now
+journalctl -u pennyrun-scan -f                  # watch the scan
+systemctl list-timers 'pennyrun-*'              # when is the next one
+sudo bash /opt/pennyrun/deploy/update.sh        # deploy a new build
 ```
 
 ## Why data lives outside the checkout
@@ -81,13 +96,20 @@ always a clean fast-forward, and `update.sh` can `reset --hard` without
 ever destroying a sweep.
 
 The copies in `tools/` are the seed: the first run on an empty data
-directory reads them, then never touches them again. Caddy serves
-`/clearance.json` from the data directory and everything else from the
-checkout.
+directory reads them, then never touches them again.
 
 `clearance.json` is written to a temp file and renamed into place, so a
-phone fetching mid-sweep gets the old file whole rather than half of the
-new one.
+concurrent reader of the data directory gets the old file whole rather
+than half of the new one. As of this deploy the Caddyfile no longer routes
+`/clearance.json` there — the app is meant to read `POST /api/v1/discovery`
+results back out through the read API instead, which is what
+`deploy/pennyrun-api.service` serves. **Until the app itself is updated to
+call the API (planned, not yet done), a machine set up with `setup.sh`
+will serve whatever `pennyrun/clearance.json` is checked into the deployed
+branch, not what its own sweep just found** — the live file in
+`$PENNYRUN_DATA` is still written every run, just not served by Caddy
+anymore. Don't be surprised if the app looks stale on a fresh `setup.sh`
+box until that follow-up lands.
 
 ## Moving off GitHub Pages
 

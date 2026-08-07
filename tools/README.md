@@ -1,8 +1,15 @@
 # The sweep
 
 `pennyrun/clearance.json` is not hand-written. It is rebuilt by
-`sweep.py` from Home Depot's own pricing API, nightly, by the
-`Nightly clearance sweep` workflow.
+`sweep.py` from Home Depot's own pricing API, nightly, run directly on a
+home box (see "Where it can run" below) rather than by a GitHub Actions
+workflow — there used to be one, but every hosted runner is refused (see
+the measurements below), and a self-hosted runner on a home network
+turned out to be more moving parts than just running `tools.sweep` there
+directly and uploading the result. `tools/upload.py` ships each run's
+rows to the droplet's `POST /api/v1/discovery` when `PENNYRUN_API` and
+`PENNYRUN_INGEST_TOKEN` are set — see `deploy/README.md` for the serving
+side.
 
 ## Why it has to be built at all
 
@@ -89,38 +96,30 @@ stage now runs first so the reason is on the line that matters.
 ### Check any machine before trusting it
 
 Datacentre ranges vary — a VPS may or may not be refused, and guessing
-wastes an evening. Ask from the box itself:
+wastes an evening. `curl | python3 -` cannot check this: `checkhost.py`
+does `from tools import hdclient`, a package-relative import that needs
+the repo's directory layout on disk, and needs `curl_cffi` installed to
+actually reach Home Depot. Clone and install it instead:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/PlanetBandit/pennyrun/main/tools/checkhost.py | python3 -
+git clone --depth 1 https://github.com/PlanetBandit/pennyrun.git /tmp/pennyrun-check
+cd /tmp/pennyrun-check
+python3 -m venv .venv && .venv/bin/pip install -q -r tools/requirements.txt
+.venv/bin/python -m tools.checkhost
 ```
 
 It prints the status of all three hosts and exits non-zero if Home Depot
-won't quote a price. No checkout, no dependencies.
+won't quote a price.
 
 ### Running it there
 
-Whatever passes the check — a VPS, an old laptop, a Pi — register a
-self-hosted GitHub runner on it and set the repository variable
-`SWEEP_RUNNER` to `self-hosted`. The workflow reads that variable, so
-nothing in the code changes and the schedule, safety rails and commit
-logic all stay as they are.
-
-```bash
-sudo apt install -y python3 git
-mkdir ~/actions-runner && cd ~/actions-runner
-# grab the download + config commands from
-#   github.com/PlanetBandit/pennyrun → Settings → Actions → Runners → New runner
-sudo ./svc.sh install && sudo ./svc.sh start   # survives reboots
-```
-
-The job is about 7 minutes, mostly waiting on the network, so the
-smallest box is plenty.
-
-Until a runner exists the nightly run fails on the probe step every
-night, which is the honest signal that the list is not refreshing.
-Disable the workflow in the Actions tab if the noise is worse than the
-reminder.
+There is no GitHub Actions runner to register anymore — collection runs
+directly on whatever box passed the check above, on its own cron or
+systemd timer (`deploy/setup.sh` installs `pennyrun-discover.timer` and
+`pennyrun-scan.timer` for exactly this). Set `PENNYRUN_API` and
+`PENNYRUN_INGEST_TOKEN` in that machine's environment and `scan()` uploads
+every run's hits to the droplet on its own; leave them unset and it just
+writes `clearance.json` locally, same as always.
 
 ## Which stores get swept
 
@@ -138,8 +137,8 @@ which only ever prices one store per night.
 | `WORKERS` | 20 | measured clean to 40; 20 leaves headroom |
 | `BATCH` | 16 | **do not raise** — the API caps `itemIds` here |
 
-`SWEEP_SLICE` is set from a repository variable in the workflow, so it
-can be changed without touching code.
+`SWEEP_SLICE` reads from the environment (see `tools/sweep.py`), so it
+can be changed per machine without touching code.
 
 ## Things that will bite you
 
