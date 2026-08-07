@@ -5,3 +5,6 @@ __pycache__/
 .env.collector
 .collector-data/
 .collector-test/
+tools/homedepot.lock
+tools/request_budget.json
+*.lock
