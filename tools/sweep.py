@@ -21,8 +21,11 @@ discovery is cheap and verification is thorough:
              per product and works through the whole catalogue in a few
              weeks. Nightly.
 
-  scan       price the pool plus everything on the hot list at EVERY
-             store, and write pennyrun/clearance.json. Nightly.
+  scan       price everything on the hot list at EVERY store, plus the
+             cold remainder of the pool at ONE rotating store, and write
+             pennyrun/clearance.json. Nightly. The split is measured: the
+             hot list runs 91% hits, the cold remainder 0% -- pricing it
+             everywhere was 86% of the requests for none of the results.
 
 Discovery is broad and shallow, verification is narrow and deep, and
 anything ever found on clearance keeps getting checked until it stops
@@ -99,7 +102,14 @@ DISCOVER_ABORT_THRESHOLD = 0.5
 # stores and then went to 100%, and the scan spent 2,348 more requests --
 # half the night's traffic -- on four stores that had already stopped
 # answering. Stop at the wall instead of leaning on it.
-SCAN_ABORT_THRESHOLD = 0.5
+#
+# 0.25, not the 0.5 discover() uses: discover's unit is one slice of tens of
+# thousands, a store here is ~81 chunks, and the wall is a cumulative request
+# budget so it lands mid-store. Exhaustion at chunk 42 of 81 reads 48% and
+# would not trip at 0.5 -- the next store then reads 100% and trips anyway,
+# having spent a whole store's requests to learn it. 0.25 still leaves 2.5x
+# headroom over the highest rate ever measured on a healthy run (10%).
+SCAN_ABORT_THRESHOLD = 0.25
 
 # How much of the catalogue to price per discover run. Measured at roughly
 # 330 products/sec here, so 60k is a few minutes locally and under fifteen on
@@ -382,8 +392,14 @@ def discover():
     nxt = offset + len(window)
     if nxt >= len(ids):
         nxt, shard = 0, (shard + 1) % len(shards)
-    write(CURSOR, {"shard": shard, "offset": nxt,
-                   "store": (cur.get("store", 0) + 1) % len(stores)})
+    # Merge, don't replace. A literal here silently dropped scan()'s
+    # `scan_store` field every night -- and since discover runs first in both
+    # collect.sh and the systemd timers, scan's cold-pool rotation was reset
+    # to 0 before every run, so seven of eight stores never had their cold
+    # pool priced at all. Anything else that lands on this cursor later would
+    # have been eaten the same way.
+    write(CURSOR, dict(cur, shard=shard, offset=nxt,
+                       store=(cur.get("store", 0) + 1) % len(stores)))
     say("discover: hot list now %d products" % len(hot))
 
 
@@ -458,16 +474,21 @@ def price_at(sid, name, ids, meta, before, note=""):
     s0 = time.time()
     run = in_batches(ids, lambda chunk, s=sid:
                      [r for r in (row(p, s, meta, before) for p in call(chunk, s)) if r])
-    bad = run.refused + run.unreachable
-    rate = bad / run.chunks if run.chunks else 0.0
-    if bad:
+    # Refused and unreachable are deliberately NOT summed. "They said no" is
+    # evidence about this address; "we never got an answer" is evidence about
+    # our own network, and a thirty-second DHCP blip must not be read as Home
+    # Depot blocking us and abort the night. hdclient defines two exception
+    # types for exactly this reason; collapsing them here would throw that
+    # away at the one place it decides something.
+    refused_rate = run.refused / run.chunks if run.chunks else 0.0
+    if run.refused or run.unreachable:
         say("  %-16s %5d hits in %5.1fs  (%d/%d chunks refused, %d unreachable)%s"
             % (name, len(run.out), time.time() - s0, run.refused, run.chunks,
                run.unreachable, note))
     else:
         say("  %-16s %5d hits in %5.1fs%s"
             % (name, len(run.out), time.time() - s0, note))
-    return run.out, rate
+    return run.out, refused_rate
 
 
 def scan():
@@ -495,9 +516,23 @@ def scan():
         die("nothing to scan -- run the harvest stage first")
 
     stores = json.load(open(STORES))
+    if not stores:
+        die("no stores configured -- %s is empty" % STORES)
     before = previous_prices()
     cur = read(CURSOR, {})
     turn = cur.get("scan_store", 0) % len(stores)
+
+    # Tiering only saves anything when the hot list is the cheap tier. On a
+    # fresh install, or after a long block ages the hot list out (HOT_DAYS),
+    # hot is empty or tiny and tiering degenerates into "price the cold pool
+    # at one store" -- a one-store scan that also never bootstraps a hot list
+    # to price everywhere later. There is no budget argument for tiering when
+    # the expensive tier is the only tier, so fall back to the flat sweep.
+    tiered = len(hot_ids) >= max(1, len(cold_ids) // 20)
+    if not tiered:
+        hot_ids, cold_ids = sorted(set(hot_ids) | set(cold_ids)), []
+        say("scan: hot list is too small to tier (%d) -- pricing everything "
+            "at every store to rebuild it" % len(hot))
 
     planned = chunks_for(len(hot_ids)) * len(stores) + chunks_for(len(cold_ids))
     flat = chunks_for(len(hot_ids) + len(cold_ids)) * len(stores)
@@ -526,6 +561,7 @@ def scan():
 
     # Tier 2: the cold pool at one rotating store, so every product still gets
     # re-checked -- just over N nights instead of every night.
+    advance = False
     if cold_ids and not blocked:
         sid, name = stores[turn]
         got, rate = price_at(sid, name, cold_ids, meta, before, "  [cold pool]")
@@ -534,7 +570,21 @@ def scan():
             say("scan: the cold sweep at %s was refused; leaving the rotation "
                 "where it is so this slice is retried, not skipped." % name)
         else:
-            write(CURSOR, dict(cur, scan_store=(turn + 1) % len(stores)), small=True)
+            advance = True
+
+    # A run the circuit breaker stopped covered only some of the stores. It
+    # must not overwrite a fuller list: the 40%-of-last-time rail compares
+    # against a total that may ITSELF have been truncated, so without this a
+    # blocked night ratchets the list down -- 8 stores, then 4, then 2, then
+    # 1, with the rail never firing because each drop is under 60%. And
+    # save_prices() replaces prices.json wholesale, so the stores that were
+    # skipped lose their baseline and the "price dropped overnight" signal --
+    # the one the app leads with -- goes null for them on the next good night.
+    if blocked:
+        die("scan stopped early: only %d of %d stores were priced before this "
+            "address started being refused. Leaving the list and the price "
+            "ledger alone rather than replacing a full night with a partial "
+            "one." % (len({r[6] for r in hits}), len(stores)))
 
     if not hits:
         die("scan came back empty -- leaving the list already on file alone")
@@ -549,6 +599,13 @@ def scan():
         hot[r[1]] = {"name": r[0], "cat": r[2] or e.get("cat", ""), "seen": TODAY}
     write(HOT, age_out(hot))
 
+    # Advance the cold rotation only now, past the rails. A run the rails
+    # discard has not really priced its slice, and marking it done would skip
+    # that slice for a full rotation.
+    if advance:
+        write(CURSOR, dict(read(CURSOR, {}), scan_store=(turn + 1) % len(stores)),
+              small=True)
+
     shipped = pick(hits)
     if len(hits) > len(shipped):
         say("scan: shipping %d of %d hits, spread across store and department"
@@ -561,10 +618,12 @@ def scan():
                 "stores_n": covered, "total_hits": len(hits), "hits": shipped},
           small=True)
     save_prices(hits)
-    say("scan: %d hits across %d of %d stores in %.1f min (%d dropped since the last sweep)%s"
+    # No "stopped early" case to report here: a run the breaker stopped die()s
+    # above rather than reaching a write, so anything getting this far covered
+    # every store it set out to.
+    say("scan: %d hits across %d of %d stores in %.1f min (%d dropped since the last sweep)"
         % (len(hits), covered, len(stores), (time.time() - t0) / 60,
-           sum(1 for r in hits if r[14] is not None),
-           "  -- STOPPED EARLY, this address was being refused" if blocked else ""))
+           sum(1 for r in hits if r[14] is not None)))
 
     # clearance.json is already written above -- collection succeeding and
     # delivery to the droplet succeeding are different events, so an upload

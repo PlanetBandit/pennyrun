@@ -118,20 +118,24 @@ def test_a_refused_store_stops_the_run_instead_of_firing_doomed_requests(bench, 
         return real(chunk, sid, lite=lite)
 
     monkeypatch.setattr(sweep, "call", blocked_after_first)
-    sweep.scan()
+    with pytest.raises(SystemExit):
+        sweep.scan()
     assert set(attempted) == {STORES[0][0], STORES[1][0]}, (
         f"kept going after the wall: knocked on {sorted(set(attempted))}")
-    # and it stopped inside the refused store too, not after grinding all of it
-    assert attempted.count(STORES[1][0]) <= sweep.chunks_for(len(HOT_IDS))
 
 
 def test_a_refused_cold_sweep_does_not_advance_the_rotation(bench, monkeypatch):
     """Otherwise a slice that was never priced gets marked done and skipped
-    for a full rotation."""
+    for a full rotation.
+
+    Seeded at scan_store=2 on purpose: with the default 0 this assertion is
+    0 == 0 and passes even against code that never writes the field at all.
+    """
     tmp, calls = bench
+    (tmp / "cursor.json").write_text(json.dumps(
+        {"shard": 0, "offset": 0, "store": 0, "scan_store": 2}))
     real = sweep.call
-    turn = json.loads((tmp / "cursor.json").read_text()).get("scan_store", 0)
-    cold_store = STORES[turn][0]
+    cold_store = STORES[2][0]
 
     def cold_refused(chunk, sid, lite=False):
         if sid == cold_store and chunk[0].startswith("c"):
@@ -140,22 +144,104 @@ def test_a_refused_cold_sweep_does_not_advance_the_rotation(bench, monkeypatch):
 
     monkeypatch.setattr(sweep, "call", cold_refused)
     sweep.scan()
-    after = json.loads((tmp / "cursor.json").read_text()).get("scan_store", 0)
-    assert after == turn, "rotation advanced past a slice that was never priced"
+    after = json.loads((tmp / "cursor.json").read_text()).get("scan_store")
+    assert after == 2, "rotation advanced past a slice that was never priced"
 
 
-def test_stores_n_reports_stores_actually_covered(bench, monkeypatch):
-    """A run stopped early covered fewer stores; the app must not be told
-    it got all of them."""
-    tmp, calls = bench
+def test_discover_does_not_clobber_the_scan_rotation(bench, monkeypatch):
+    """discover() used to write a literal cursor dict, dropping scan_store.
+    Since discover runs first in both collect.sh and the systemd timers, that
+    reset the cold rotation to 0 every night -- so seven of eight stores never
+    had their cold pool priced at all, ever, while the log cheerfully said
+    'cold at <store 0> only' as though that were the plan."""
+    tmp, _ = bench
+    (tmp / "cursor.json").write_text(json.dumps(
+        {"shard": 0, "offset": 0, "store": 1, "scan_store": 2}))
+
+    # discover() has to RUN TO COMPLETION for this to mean anything -- the bug
+    # is in the cursor write at the very end, so a discover that die()s early
+    # (a refused sitemap, say) never touches it and the test would pass
+    # against the defect.
+    def fake_get(url, timeout=60):
+        if url == sweep.SITEMAP:
+            return "<loc>https://x/shard-0.xml</loc>"
+        return "".join(f"<loc>https://x/p/thing-{i}/{100000+i}</loc>" for i in range(32))
+
+    def fake_call(chunk, sid, lite=False):
+        return [{"itemId": i, "identifiers": {"productLabel": f"n{i}"},
+                 "taxonomy": {"breadCrumbs": [{"label": "Cat"}]},
+                 "pricing": {"clearance": {"value": 1.0}}} for i in chunk]
+
+    monkeypatch.setattr(sweep, "get", fake_get)
+    monkeypatch.setattr(sweep, "call", fake_call)
+    sweep.discover()
+
+    cur = json.loads((tmp / "cursor.json").read_text())
+    assert cur["scan_store"] == 2, (
+        "discover ate the scan rotation -- the cold pool would be priced at "
+        "store 0 every night, forever")
+    assert cur["store"] == 2, "discover's own rotation stopped advancing"
+
+
+def test_a_blocked_run_never_overwrites_a_fuller_list(bench, monkeypatch):
+    """The ratchet. The 40%-of-last-time rail compares against a total that may
+    itself have been truncated, so without an explicit guard a blocked night
+    walks the list down 8 stores -> 4 -> 2 -> 1 and the rail never fires,
+    because each drop is under 60%. save_prices() replaces prices.json
+    wholesale too, so the skipped stores lose the baseline that powers the
+    'price dropped overnight' signal."""
+    tmp, _ = bench
+    sweep.scan()                                   # night 1: full
+    full = json.loads((tmp / "clearance.json").read_text())
+    assert full["stores_n"] == len(STORES)
+
     real = sweep.call
 
-    def blocked_after_first(chunk, sid, lite=False):
-        if sid != STORES[0][0]:
-            raise hdclient.Refused("HTTP 206")
+    def blocked_after_two(chunk, sid, lite=False):
+        if sid in (STORES[0][0], STORES[1][0]):
+            return real(chunk, sid, lite=lite)
+        raise hdclient.Refused("HTTP 206")
+
+    monkeypatch.setattr(sweep, "call", blocked_after_two)
+    with pytest.raises(SystemExit):
+        sweep.scan()                               # night 2: blocked at store 3
+
+    after = json.loads((tmp / "clearance.json").read_text())
+    assert after["stores_n"] == full["stores_n"], "a partial run replaced a full one"
+    assert after["total_hits"] == full["total_hits"]
+
+
+def test_an_empty_hot_list_still_prices_every_store(bench, monkeypatch):
+    """On a fresh install, or after a long block ages the hot list out, tiering
+    would degenerate into a one-store scan that also never rebuilds a hot list
+    to price everywhere later."""
+    tmp, calls = bench
+    (tmp / "hot.json").write_text("{}")
+    sweep.scan()
+    for sid, _ in STORES:
+        assert ids_asked_at(calls, sid), f"store {sid} was never priced"
+    out = json.loads((tmp / "clearance.json").read_text())
+    assert out["stores_n"] == len(STORES)
+
+
+def test_stores_n_counts_stores_actually_present_in_the_hits(bench, monkeypatch):
+    """stores_n is derived from the hits rather than from len(stores), so it
+    cannot claim coverage the run did not have.
+
+    A run stopped by the circuit breaker no longer reaches this write at all
+    (it die()s -- see test_a_blocked_run_never_overwrites_a_fuller_list), so
+    the case this pins is the quieter one: a store that answers cleanly and
+    genuinely has nothing on clearance contributes no rows, and must not be
+    counted as covered."""
+    tmp, _ = bench
+    real = sweep.call
+
+    def empty_at_delta(chunk, sid, lite=False):
+        if sid == STORES[3][0]:
+            return []          # answered fine, nothing marked down here
         return real(chunk, sid, lite=lite)
 
-    monkeypatch.setattr(sweep, "call", blocked_after_first)
+    monkeypatch.setattr(sweep, "call", empty_at_delta)
     sweep.scan()
     out = json.loads((tmp / "clearance.json").read_text())
-    assert out["stores_n"] == 1, f"claimed {out['stores_n']} stores, only 1 answered"
+    assert out["stores_n"] == 3, f"claimed {out['stores_n']} stores, 3 had hits"

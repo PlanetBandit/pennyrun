@@ -47,8 +47,27 @@ for the same budget, and a promoted item gets priced everywhere from then
 on. The cursor in `tools/cursor.json` remembers the shard, the offset and
 which store's turn it is.
 
-**scan** prices the pool plus the whole hot list at **every** store and
-writes the app's list.
+**scan** prices the **hot list at every store**, and the cold remainder of
+the pool at **one rotating store**, then writes the app's list.
+
+That split is measured, not assumed. On the run of 2026-08-07, across the
+four stores that answered before this address was cut off:
+
+| tier | items | on clearance somewhere |
+|---|---|---|
+| hot list | 1,288 | 1,173 (**91.1%**) |
+| cold pool | 8,097 | 0 (**0.00%**) |
+
+Pricing the cold pool everywhere was 86% of the night's requests for none of
+the hits — and that is structural, not luck: anything that goes on clearance
+is promoted to the hot list and priced everywhere from then on, so what is
+left in the cold pool has already been mined. A full sweep went from 4,696
+requests a night to 1,155, which matters because the wall this address hit
+that night was measured at roughly **2,350 requests in one window**.
+
+`scan` also stops when a store refuses a quarter of its chunks. That run kept
+going through four fully-refused stores, spending 2,348 requests that could
+not succeed and only deepened the block.
 
 Discovery is broad and shallow, verification is narrow and deep, and
 anything ever found on clearance keeps being checked until it stops
