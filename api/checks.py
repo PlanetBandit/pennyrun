@@ -288,7 +288,7 @@ def finish(job_id: int, payload: dict, authorization: str = Header(None)):
         from api.push import send_to_devices
         name = got["store_id"]
         if got["state"] == "done":
-            title, body = "Prices updated", f"{name} is current — {got['hits'] or 0} on clearance"
+            title, body = "Prices updated", f"{name} is current — {hits or 0} on clearance"
         else:
             title, body = "Check didn't finish", f"Home Depot didn't answer for {name}"
         try:

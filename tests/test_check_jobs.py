@@ -246,3 +246,34 @@ def test_status_is_readable_without_a_token(api):
 
 def test_status_404s_on_an_unknown_job(api):
     assert api.get("/api/v1/checks/999999").status_code == 404
+
+
+# ---------------------------------------------------------------- notifying
+
+def test_finishing_a_watched_job_does_not_500(api, queue_conn):
+    """The notify path reads fields off the report to build its message, and
+    `returning` does not carry all of them. That mismatch is invisible until a
+    job actually has a watcher -- every earlier test finished jobs nobody was
+    watching, so the whole branch was dead code under test while being live in
+    production."""
+    import uuid as _uuid
+    dev = str(_uuid.uuid4())
+    job = ask(api, [S1], device=dev).json()["queued"][0]["job_id"]
+    api.get("/api/v1/checks/next", headers=AUTH)
+    r = api.post(f"/api/v1/checks/{job}/done",
+                 json={"hits": 118, "refused": 2}, headers=AUTH)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["watchers"] == 1
+    assert body["state"] == "done"
+
+
+def test_a_watched_job_that_fails_also_does_not_500(api):
+    import uuid as _uuid
+    dev = str(_uuid.uuid4())
+    job = ask(api, [S2], device=dev).json()["queued"][0]["job_id"]
+    api.get("/api/v1/checks/next", headers=AUTH)
+    r = api.post(f"/api/v1/checks/{job}/done",
+                 json={"failed": True, "hits": 0, "refused": 81}, headers=AUTH)
+    assert r.status_code == 200, r.text
+    assert r.json()["state"] == "failed"
