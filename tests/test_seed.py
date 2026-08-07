@@ -107,6 +107,50 @@ def test_product_first_seen_does_not_move_but_last_seen_does(fresh_conn):
             "last_seen should be bumped back up to today"
 
 
+def test_reseed_heals_a_placeholder_name(fresh_conn):
+    """`db/seed.py`'s catalogue re-seed is the authoritative source of
+    real product names -- the one place a discovery-written placeholder
+    (`api/ingest.py`: `"(discovered) <item_id>"`) is ever meant to get
+    fixed. `on conflict do update set last_seen = current_date` alone
+    never touches `name`, so a placeholder would otherwise survive every
+    future re-seed forever -- the same bug `api/ingest.py`'s own upsert
+    had, on the one path that actually has the real name to fix it with.
+    """
+    migrate.apply(fresh_conn)
+    seed.stores(fresh_conn, STORES_PATH)
+
+    with fresh_conn.cursor() as cur:
+        cur.execute(
+            "insert into product (item_id, name) values (%s, %s)",
+            ("204767783", "(discovered) 204767783"))
+    fresh_conn.commit()
+
+    seed.products(fresh_conn, CLEARANCE_PATH)
+
+    with fresh_conn.cursor() as cur:
+        cur.execute("select name from product where item_id = '204767783'")
+        assert cur.fetchone()[0] == (
+            '3 ft. x 33.3 ft. (100 sq. ft. coverage area) Black Mineral Surface Roll Low Sl'
+        ), "a real name from the catalogue must heal a discovery placeholder"
+
+
+def test_reseed_never_clobbers_a_real_name(fresh_conn):
+    migrate.apply(fresh_conn)
+    seed.stores(fresh_conn, STORES_PATH)
+    seed.products(fresh_conn, CLEARANCE_PATH)
+
+    with fresh_conn.cursor() as cur:
+        cur.execute("update product set name = %s where item_id = '204767783'",
+                    ("A Human Corrected This Name",))
+    fresh_conn.commit()
+
+    seed.products(fresh_conn, CLEARANCE_PATH)
+
+    with fresh_conn.cursor() as cur:
+        cur.execute("select name from product where item_id = '204767783'")
+        assert cur.fetchone()[0] == "A Human Corrected This Name"
+
+
 def test_skips_malformed_store_rows_without_crashing(fresh_conn, tmp_path):
     migrate.apply(fresh_conn)
     bad_path = tmp_path / "hd-stores-bad.json"

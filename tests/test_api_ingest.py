@@ -236,6 +236,22 @@ def test_malformed_envelope_is_400_not_500(client):
     assert r.status_code == 400
 
 
+def test_infinite_quantity_is_rejected_not_500(client):
+    # Same trap as NaN, round 2: bare `Infinity` is JSON-legal to stdlib
+    # `json`, `int(float("inf"))` raises `OverflowError`, and
+    # `validate.py` must catch it at the source now rather than relying
+    # on `api/ingest.py`'s broader catch to save the batch.
+    body = {"observations": [
+        BODY["observations"][0],
+        {"item_id": "204767783", "store_id": "2502", "clearance_price": "1.00",
+         "quantity": float("inf")}]}
+    r = client.post("/api/v1/discovery", content=json.dumps(body),
+                    headers={"Authorization": f"Bearer {TOKEN}",
+                             "Content-Type": "application/json"})
+    assert r.status_code == 200
+    assert r.json() == {"accepted": 1, "rejected": 1}
+
+
 # --- Review round 1 -----------------------------------------------------
 #
 # Important 1: Starlette decodes headers as latin-1, so any header byte

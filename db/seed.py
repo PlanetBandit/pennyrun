@@ -75,7 +75,14 @@ def products(conn, path):
 
     On conflict, only `last_seen` moves -- `first_seen` defaults to
     `current_date` on first insert and must never shift again, forwards
-    or backwards, once a product has been seen.
+    or backwards, once a product has been seen. `name` is the one
+    exception: this catalogue load is the authoritative source of real
+    product names, and `api/ingest.py`'s discovery upsert writes a
+    placeholder (`"(discovered) <item_id>"`) for any item it finds
+    without one. A conflict here heals that placeholder with the real
+    name from this run, but -- like `api/ingest.py`'s own upsert -- never
+    overwrites a name that's already real, so a re-seed can't clobber a
+    hand-corrected one.
     """
     hits = json.load(open(path))["hits"]
     seen = {}
@@ -86,7 +93,10 @@ def products(conn, path):
         cur.executemany(
             "insert into product (item_id, name, category, upc, store_sku, "
             "model_number, canonical_url) values (%s,%s,%s,%s,%s,%s,%s) "
-            "on conflict (item_id) do update set last_seen = current_date",
+            "on conflict (item_id) do update set "
+            "last_seen = current_date, "
+            "name = case when product.name like '(discovered) %%' "
+            "            then excluded.name else product.name end",
             list(seen.values()))
     conn.commit()
     return len(seen)
