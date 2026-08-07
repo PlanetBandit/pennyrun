@@ -4,3 +4,4 @@ psycopg[binary]
 fastapi
 uvicorn[standard]
 httpx
+certifi

@@ -37,9 +37,34 @@ chunk that succeeded before the failing one, so whoever is watching (or
 re-running) knows where it stopped.
 """
 import json
+import ssl
 import time
 import urllib.error
 import urllib.request
+
+
+def _tls_context():
+    """Verify our droplet's certificate using certifi's CA bundle.
+
+    A Homebrew or python.org interpreter on macOS ships no root
+    certificates, so stdlib `urllib` cannot verify Let's Encrypt and every
+    upload dies with CERTIFICATE_VERIFY_FAILED -- on a collector box that
+    reaches Home Depot perfectly well, because `curl_cffi` carries its own
+    CA store. That asymmetry cost this project an evening once already,
+    when the same missing-roots problem made `checkhost.py` report a
+    confident BLOCKED. Pin the bundle rather than inherit the host's.
+
+    Falls back to the system store if certifi is absent -- on Linux that
+    is correct and certifi is one more thing to install.
+    """
+    try:
+        import certifi
+    except ImportError:
+        return ssl.create_default_context()
+    return ssl.create_default_context(cafile=certifi.where())
+
+
+_TLS = _tls_context()
 
 CHUNK = 1000
 MAX_ATTEMPTS = 3
@@ -107,7 +132,7 @@ def _post(url, body, token):
     for attempt in range(1, MAX_ATTEMPTS + 1):
         req = urllib.request.Request(url, data=data, headers=headers)
         try:
-            with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+            with urllib.request.urlopen(req, timeout=TIMEOUT, context=_TLS) as r:
                 return json.loads(r.read())
         except urllib.error.HTTPError as e:
             if 400 <= e.code < 500:

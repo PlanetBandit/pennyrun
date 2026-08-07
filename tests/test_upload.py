@@ -123,7 +123,7 @@ def test_post_retries_on_transport_failure_then_succeeds(monkeypatch):
     monkeypatch.setattr(upload.time, "sleep", lambda s: None)
     calls = {"n": 0}
 
-    def flaky_urlopen(req, timeout=None):
+    def flaky_urlopen(req, timeout=None, **kw):
         calls["n"] += 1
         if calls["n"] < 3:
             raise urllib.error.URLError("connection refused")
@@ -139,7 +139,7 @@ def test_post_gives_up_after_bounded_retries(monkeypatch):
     monkeypatch.setattr(upload.time, "sleep", lambda s: None)
     calls = {"n": 0}
 
-    def always_fails(req, timeout=None):
+    def always_fails(req, timeout=None, **kw):
         calls["n"] += 1
         raise urllib.error.URLError("connection refused")
 
@@ -155,7 +155,7 @@ def test_post_does_not_retry_a_4xx(monkeypatch):
     monkeypatch.setattr(upload.time, "sleep", lambda s: None)
     calls = {"n": 0}
 
-    def rejected(req, timeout=None):
+    def rejected(req, timeout=None, **kw):
         calls["n"] += 1
         raise urllib.error.HTTPError("http://x", 400, "Bad Request", {}, None)
 
