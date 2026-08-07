@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 import pytest
 from api import validate
 
@@ -182,3 +184,63 @@ def test_rejects_name_with_a_control_character():
     bad["name"] = "Ryobi Drill\nfake log line: root logged in"
     with pytest.raises(ValueError, match="control"):
         validate.check(bad)
+
+
+# --- Re-review, Medium 2 -------------------------------------------------
+#
+# The six catalogue fields (category/canonical_url/upc/store_sku/
+# model_number/replacement_id) used to be bounded exactly like `name` --
+# raise on overlong, wrong type, or a control character. `observation` is
+# append-only with no delete path, so that raise cost the whole row, not
+# just the field: a numeric-typed `upc` or an overlong `canonical_url`
+# from Home Depot -- both realistic, since these fields weren't sent to
+# this endpoint at all before the fix wave that added them -- would
+# permanently drop the price, every night the same field recurred. They
+# must degrade instead: truncate if merely too long, drop to `None`
+# otherwise, and never raise.
+
+
+def test_overlong_category_is_truncated_not_rejected():
+    good = dict(GOOD)
+    good["category"] = "x" * (validate.CATEGORY_MAX_LEN + 50)
+    parsed = validate.check(good)
+    assert parsed["category"] == "x" * validate.CATEGORY_MAX_LEN
+
+
+def test_non_string_upc_is_dropped_not_rejected():
+    """Home Depot's own API can hand back a numeric-typed value for a
+    field like this -- the realistic trigger the review named."""
+    good = dict(GOOD)
+    good["upc"] = 791308000105
+    parsed = validate.check(good)
+    assert parsed["upc"] is None
+    # and the rest of the row -- the price -- still lands
+    assert parsed["clearance_price"] == Decimal("1.20")
+
+
+def test_control_character_in_canonical_url_is_dropped_not_rejected():
+    good = dict(GOOD)
+    good["canonical_url"] = "/p/x/1\nfake log line"
+    parsed = validate.check(good)
+    assert parsed["canonical_url"] is None
+
+
+def test_empty_string_catalogue_fields_become_none():
+    good = dict(GOOD)
+    good["category"] = ""
+    parsed = validate.check(good)
+    assert parsed["category"] is None
+
+
+def test_valid_catalogue_fields_pass_through_unchanged():
+    good = dict(GOOD)
+    good.update(category="Building", canonical_url="/p/x/204767783",
+                upc="791308000105", store_sku="418625",
+                model_number="4305036", replacement_id="1")
+    parsed = validate.check(good)
+    assert parsed["category"] == "Building"
+    assert parsed["canonical_url"] == "/p/x/204767783"
+    assert parsed["upc"] == "791308000105"
+    assert parsed["store_sku"] == "418625"
+    assert parsed["model_number"] == "4305036"
+    assert parsed["replacement_id"] == "1"

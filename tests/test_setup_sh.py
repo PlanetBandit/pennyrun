@@ -86,7 +86,8 @@ def test_scan_gets_a_default_api_url_and_the_ingest_token():
     # "-" prefix: a missing/unreadable token file must not stop the scan
     # itself (and clearance.json) from running -- scan() already treats a
     # missing token as "don't upload", tested in test_sweep_upload.py.
-    assert re.search(r'^\tINGEST_LINE="EnvironmentFile=-\$INGEST_ENV"$', text, re.M)
+    assert re.search(r'^\tSCAN_INGEST_ENV="\$INGEST_ENV"$', text, re.M)
+    assert re.search(r'^INGEST_LINE="EnvironmentFile=-\$SCAN_INGEST_ENV"$', text, re.M)
     assert "$INGEST_LINE" in scan
 
 
@@ -107,36 +108,62 @@ def test_setup_sh_honours_an_external_api_url_and_ingest_token():
     assert re.search(
         r'if \[ -n "\$\{PENNYRUN_INGEST_TOKEN:-\}" \]; then', text), \
         "an explicit PENNYRUN_INGEST_TOKEN must be honoured, not just the local file"
-    assert 'INGEST_LINE="Environment=PENNYRUN_INGEST_TOKEN=$PENNYRUN_INGEST_TOKEN"' in text
+    assert 'SCAN_INGEST_ENV="$UPSTREAM_INGEST_ENV"' in text
+
+
+def test_upstream_ingest_token_is_written_to_its_own_0600_file():
+    """Re-review Medium 1: an explicit PENNYRUN_INGEST_TOKEN used to be
+    embedded directly in the unit as `Environment=PENNYRUN_INGEST_TOKEN=...`
+    -- write_unit's plain `cat >` leaves that file at the process's
+    default umask (0644, world-readable), with no chmod ever run on it,
+    unlike every other secret this script writes. It must go through the
+    same (umask 077; ...) + chmod 600 discipline as $DB_ENV/$INGEST_ENV,
+    and the unit must reference it only via EnvironmentFile= -- one
+    secret-handling rule, not two."""
+    text = _read()
+
+    assert "Environment=PENNYRUN_INGEST_TOKEN=$PENNYRUN_INGEST_TOKEN" not in text, \
+        "the token must never be embedded directly in a unit body"
+
+    assert re.search(r"\(umask 077;.*UPSTREAM_INGEST_ENV", text, re.S)
+    assert re.search(r'^\tchmod 600 "\$UPSTREAM_INGEST_ENV"', text, re.M)
 
 
 def test_sweep_timers_are_gated_on_sweepable():
-    """CRITICAL 2 of the branch review: a BLOCKED or UNKNOWN host used to
-    get pennyrun-discover.timer and pennyrun-scan.timer enabled
-    unconditionally -- ~3,750 refused discover chunks plus ~408 refused
-    scan chunks fired at Home Depot every night, forever, from a host
-    that can never produce a hit. The units must still be written either
-    way (so enabling them later is one command, not a re-run of this
-    script) but only *enabled* when SWEEPABLE=yes."""
+    """CRITICAL 2 / re-review Low 4 of the branch review: a BLOCKED or
+    UNKNOWN host used to get every sweep timer enabled unconditionally --
+    ~3,750 refused discover chunks, ~408 refused scan chunks, and 772
+    refused harvest requests a week, fired at Home Depot forever, from a
+    host that can never produce a hit. The units must still be written
+    either way (so enabling them later is one command, not a re-run of
+    this script) but only *enabled* when SWEEPABLE=yes -- and harvest is
+    gated exactly like discover/scan, not left unconditional."""
     text = _read()
     m = re.search(
-        r'systemctl daemon-reload\n(?:#.*\n)*if \[ "\$SWEEPABLE" = "yes" \]; then\n'
+        r'systemctl daemon-reload\n(?:#.*\n)*'
+        r'SWEEP_TIMERS="pennyrun-discover\.timer pennyrun-scan\.timer pennyrun-harvest\.timer"\n'
+        r'if \[ "\$SWEEPABLE" = "yes" \]; then\n'
+        r'(.*?)\nelif \[ "\$CHECK_STATUS" = "1" \]; then\n'
         r'(.*?)\nelse\n(.*?)\nfi\n', text, re.S)
-    assert m, "expected discover/scan timer enablement gated on SWEEPABLE"
-    yes_body, no_body = m.groups()
+    assert m, "expected all three sweep timers gated on SWEEPABLE/CHECK_STATUS"
+    yes_body, blocked_body, unknown_body = m.groups()
 
-    assert "systemctl enable --now pennyrun-discover.timer pennyrun-scan.timer pennyrun-harvest.timer" in yes_body
+    assert "systemctl enable --now $SWEEP_TIMERS" in yes_body
 
-    # harvest is unaffected either way -- only discover/scan are gated
-    enable_line = next(l for l in no_body.splitlines() if l.strip().startswith("systemctl enable --now"))
-    assert "pennyrun-harvest.timer" in enable_line
-    assert "pennyrun-discover.timer" not in enable_line
-    assert "pennyrun-scan.timer" not in enable_line
+    # BLOCKED enforces the state even if a prior run left the timers
+    # enabled -- a definite, durable answer must not leave them firing.
+    assert "systemctl disable --now $SWEEP_TIMERS" in blocked_body
+
+    # UNKNOWN touches nothing -- not evidence of a refusal, and a
+    # transient blip must not silently kill a working collector.
+    assert "systemctl enable" not in unknown_body
+    assert "systemctl disable" not in unknown_body
 
     # the units themselves are still written before this point, whether
     # or not they end up enabled
     assert text.index("write_unit pennyrun-discover.service") < text.index(m.group(0))
     assert text.index("write_unit pennyrun-scan.service") < text.index(m.group(0))
+    assert text.index("write_unit pennyrun-harvest.service") < text.index(m.group(0))
 
 
 def test_checkhost_blocked_and_unknown_are_narrated_differently():
@@ -260,3 +287,4 @@ def test_ingest_token_and_db_credential_are_never_world_or_group_readable():
     text = _read()
     assert re.search(r"\(umask 077;.*DB_ENV", text, re.S)
     assert re.search(r"\(umask 077;.*INGEST_ENV", text, re.S)
+    assert re.search(r"\(umask 077;.*UPSTREAM_INGEST_ENV", text, re.S)

@@ -177,18 +177,27 @@ if [ "$SWEEPABLE" = "no" ]; then
 		echo "    this script can fix it. The sweep has to run from a residential"
 		echo "    connection instead -- see deploy/README.md, 'Running the"
 		echo "    collector on a home box'."
+		echo
+		echo "    The site will still serve. pennyrun-discover.timer,"
+		echo "    pennyrun-scan.timer and pennyrun-harvest.timer are installed"
+		echo "    below and will be disabled (even if an earlier run on this box"
+		echo "    left them enabled) -- nothing here hits Home Depot from this box"
+		echo "    until you explicitly run:"
+		echo "        sudo systemctl enable --now pennyrun-discover.timer pennyrun-scan.timer pennyrun-harvest.timer"
 	else
 		echo "    checkhost could not tell (exit $CHECK_STATUS, UNKNOWN) -- most"
 		echo "    likely a local network or TLS problem on this box, not a Home"
 		echo "    Depot refusal. Fix that first, then check again:"
 		echo "        $DIR/.venv/bin/python -m tools.checkhost"
+		echo
+		echo "    The site will still serve. The sweep timers are installed below"
+		echo "    and left exactly as they currently are -- not newly enabled by"
+		echo "    this run, but not disabled either: an UNKNOWN result is not a"
+		echo "    confirmed refusal, and a transient blip must not silently kill a"
+		echo "    collector that has been working every other night. If they were"
+		echo "    never enabled before, enable them once you've confirmed GOOD:"
+		echo "        sudo systemctl enable --now pennyrun-discover.timer pennyrun-scan.timer pennyrun-harvest.timer"
 	fi
-	echo
-	echo "    The site will still serve either way. pennyrun-discover.timer and"
-	echo "    pennyrun-scan.timer are installed below but left disabled -- a"
-	echo "    disabled timer never fires on its own, so nothing here hits Home"
-	echo "    Depot from this box until you explicitly run:"
-	echo "        sudo systemctl enable --now pennyrun-discover.timer pennyrun-scan.timer"
 	echo
 fi
 
@@ -362,22 +371,31 @@ RandomizedDelaySec=120
 WantedBy=timers.target
 EOF
 
-# The scan unit's ingest credential: an explicit PENNYRUN_INGEST_TOKEN in
-# this script's own environment wins, embedded directly in the unit,
-# because it means this box collects for a *different* droplet and there
-# is no local $INGEST_ENV for that droplet's token to live in. Otherwise
-# fall back to $INGEST_ENV -- the token this run generated (or already
-# had) for this box's own API -- read at service-start time via
-# EnvironmentFile so a rotated token doesn't need a re-run of this
-# script. Prefixed with "-" in that branch because scan() already treats
-# a missing token as "don't upload, just write clearance.json" (tested)
-# -- a missing/unreadable token file must not stop the scan itself from
+# The scan unit's ingest credential always comes from a 0600
+# EnvironmentFile -- one code path, one secret-handling rule, matching
+# $DB_ENV/$INGEST_ENV just above (umask 077 at write time, chmod 600 to
+# self-heal an older file; never `Environment=TOKEN=...` embedded
+# straight in a unit, which write_unit's plain `cat >` leaves at the
+# process umask -- 0644, world-readable -- with no chmod ever run on it).
+# An explicit PENNYRUN_INGEST_TOKEN in this script's own environment
+# means this box collects for a *different* droplet, so it gets written
+# into its own file ($UPSTREAM_INGEST_ENV) rather than reused from
+# $INGEST_ENV, which holds *this* box's own token for *its own* API.
+# Prefixed with "-" either way because scan() already treats a missing
+# token as "don't upload, just write clearance.json" (tested) -- a
+# missing/unreadable token file must not stop the scan itself from
 # running.
+UPSTREAM_INGEST_ENV=/etc/pennyrun/upstream-ingest.env
 if [ -n "${PENNYRUN_INGEST_TOKEN:-}" ]; then
-	INGEST_LINE="Environment=PENNYRUN_INGEST_TOKEN=$PENNYRUN_INGEST_TOKEN"
+	mkdir -p /etc/pennyrun
+	(umask 077; printf 'PENNYRUN_INGEST_TOKEN=%s\n' \
+		"$PENNYRUN_INGEST_TOKEN" > "$UPSTREAM_INGEST_ENV")
+	chmod 600 "$UPSTREAM_INGEST_ENV"  # self-heal a file that predates this fix
+	SCAN_INGEST_ENV="$UPSTREAM_INGEST_ENV"
 else
-	INGEST_LINE="EnvironmentFile=-$INGEST_ENV"
+	SCAN_INGEST_ENV="$INGEST_ENV"
 fi
+INGEST_LINE="EnvironmentFile=-$SCAN_INGEST_ENV"
 
 write_unit pennyrun-scan.service <<EOF
 [Unit]
@@ -458,20 +476,33 @@ WantedBy=timers.target
 EOF
 
 systemctl daemon-reload
-# discover/scan are only ever enabled on a host the SWEEPABLE check above
-# found reachable -- a BLOCKED or UNKNOWN host would otherwise fire
-# ~3,750 refused discover chunks plus ~408 refused scan chunks at Home
-# Depot every night, forever, against a service whose terms are already
-# being stretched, for a run that can never produce a hit. The units are
-# always written (harvest's weekly pool rebuild is unaffected either
-# way), just not started, so enabling them later is one command away
-# once the situation actually changes -- see the SWEEPABLE=no message
-# above for the exact command.
+# All three sweep timers are gated on the SWEEPABLE check above -- a
+# BLOCKED or UNKNOWN host would otherwise fire ~3,750 refused discover
+# chunks, ~408 refused scan chunks, and 772 refused harvest requests
+# (193 search terms x 4 pages, weekly) at Home Depot, forever, against a
+# service whose terms are already being stretched, for runs that can
+# never produce a hit. The units are always written -- so enabling them
+# later, if the situation changes, is one command, not a re-run of this
+# script -- but "enable" only ever fires on SWEEPABLE=yes.
+#
+# BLOCKED (CHECK_STATUS=1) additionally *disables* them if a previous
+# run on this same box left them enabled -- a definite, durable answer
+# ("this address is refused") must not leave last night's timers still
+# firing just because this script only ever handled the enable
+# direction before. UNKNOWN (CHECK_STATUS=2) never disables anything:
+# it is not evidence of a refusal, just a failure to get a clean answer,
+# and silently killing a collector that has been working every other
+# night over one transient local blip would be worse than leaving it
+# running through it.
+SWEEP_TIMERS="pennyrun-discover.timer pennyrun-scan.timer pennyrun-harvest.timer"
 if [ "$SWEEPABLE" = "yes" ]; then
-	systemctl enable --now pennyrun-discover.timer pennyrun-scan.timer pennyrun-harvest.timer >/dev/null
+	systemctl enable --now $SWEEP_TIMERS >/dev/null
+	say "sweep timers enabled -- this host is sweepable"
+elif [ "$CHECK_STATUS" = "1" ]; then
+	systemctl disable --now $SWEEP_TIMERS >/dev/null 2>&1 || true
+	say "sweep timers disabled -- this host is BLOCKED (see above)"
 else
-	systemctl enable --now pennyrun-harvest.timer >/dev/null
-	say "pennyrun-discover.timer and pennyrun-scan.timer are installed but NOT enabled (see above)"
+	say "sweep timers left exactly as they were -- this host's checkhost result is UNKNOWN, not a confirmed refusal (see above)"
 fi
 
 # ---------------------------------------------------------------- done
@@ -481,7 +512,7 @@ say "serving https://$HOST"
 echo "    the certificate takes a few seconds on the first request"
 echo
 if [ "$SWEEPABLE" = "no" ]; then
-	echo "    enable the sweep    sudo systemctl enable --now pennyrun-discover.timer pennyrun-scan.timer"
+	echo "    enable the sweep    sudo systemctl enable --now $SWEEP_TIMERS"
 fi
 echo "    scan now        sudo systemctl start pennyrun-scan.service"
 echo "    discover now    sudo systemctl start pennyrun-discover.service"

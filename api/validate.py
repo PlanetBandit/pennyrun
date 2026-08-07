@@ -55,9 +55,19 @@ that:
   straight into `numeric(10,2)`/`numeric(5,2)` rather than re-parsing (or
   worse, letting a caller's raw `float` survive) the same string twice.
 - The catalogue string fields (`category`, `canonical_url`, `upc`,
-  `store_sku`, `model_number`, `replacement_id`) are bounded the same way
-  `name` is -- length-capped and control-character-free -- and a bare
-  empty string is normalised to `None` here so it can never win a
+  `store_sku`, `model_number`, `replacement_id`) are *degraded*, not
+  rejected: too long gets truncated, the wrong type or a control
+  character becomes `None`, and a bare empty string is normalised to
+  `None` too, but none of that ever raises. This is deliberately
+  different from `name` (and from `item_id`/`store_id`/the money
+  fields), which still raise on the same problems. `observation` is
+  append-only with no delete path -- rejecting the whole row over a
+  decorative field that happens to be the wrong shape would drop a
+  price permanently, and re-drop it every night the same field recurs.
+  `item_id`/`store_id` still raise because they're identity (a junk one
+  is a permanent, wrong foreign key), and money still raises because a
+  bad price is the one thing worth losing the row over. `None` (not an
+  empty string) is what a degraded field becomes so it can never win a
   `coalesce(excluded.x, product.x)` upsert against a real value already
   on file the way a genuine `NULL` is designed to lose.
 """
@@ -95,12 +105,14 @@ def _identifier(raw, field):
 
 
 def _bounded_text(raw, field, max_len):
-    """Same treatment as `name`: length-capped, no control characters.
+    """Hard rejection: length-capped, no control characters, or raise.
+    Used only for `name` -- see `_degrade_text` for the six catalogue
+    fields, which must never cost the row.
 
     An empty string is treated as "not sent" (`None`), not as a value --
     otherwise it would beat a real, already-stored value in the
     `coalesce(excluded.x, product.x)` upsert `api/ingest.py` and
-    `db/seed.py` both use for these fields.
+    `db/seed.py` both use for `name`'s placeholder-healing equivalent.
     """
     if raw == "":
         return None
@@ -111,6 +123,33 @@ def _bounded_text(raw, field, max_len):
     if CONTROL_CHAR_RE.search(raw):
         raise ValueError(f"{field} contains control characters: {raw!r}")
     return raw
+
+
+def _degrade_text(raw, max_len):
+    """Best-effort catalogue field: a bad value degrades the field, never
+    the row. `observation` is append-only with no delete path, so raising
+    here the way `_bounded_text` does for `name` would drop a price
+    permanently over a decorative field that merely had the wrong shape
+    -- Home Depot's own numeric-typed `upc`, or an overlong
+    `canonical_url`, are realistic triggers (these six fields weren't
+    sent to this endpoint at all before this fix wave, so this couldn't
+    happen before it either).
+
+    Too long is truncated -- the same spirit as the 78-char truncation
+    `sweep.row()` already applies to `name` at collection time. The
+    wrong type, `None`, an empty string, or a control character all
+    become `None` instead: there's no well-defined prefix to keep for
+    any of those, and `None` is also what keeps a bad value from
+    winning a `coalesce(excluded.x, product.x)` upsert against a real
+    value already on file.
+    """
+    if raw is None or raw == "":
+        return None
+    if not isinstance(raw, str):
+        return None
+    if CONTROL_CHAR_RE.search(raw):
+        return None
+    return raw[:max_len]
 
 
 def check(obs):
@@ -124,12 +163,12 @@ def check(obs):
     store_id = obs["store_id"]
 
     name = _bounded_text(obs.get("name"), "name", NAME_MAX_LEN)
-    category = _bounded_text(obs.get("category"), "category", CATEGORY_MAX_LEN)
-    canonical_url = _bounded_text(obs.get("canonical_url"), "canonical_url", URL_MAX_LEN)
-    upc = _bounded_text(obs.get("upc"), "upc", CATALOG_FIELD_MAX_LEN)
-    store_sku = _bounded_text(obs.get("store_sku"), "store_sku", CATALOG_FIELD_MAX_LEN)
-    model_number = _bounded_text(obs.get("model_number"), "model_number", CATALOG_FIELD_MAX_LEN)
-    replacement_id = _bounded_text(obs.get("replacement_id"), "replacement_id", CATALOG_FIELD_MAX_LEN)
+    category = _degrade_text(obs.get("category"), CATEGORY_MAX_LEN)
+    canonical_url = _degrade_text(obs.get("canonical_url"), URL_MAX_LEN)
+    upc = _degrade_text(obs.get("upc"), CATALOG_FIELD_MAX_LEN)
+    store_sku = _degrade_text(obs.get("store_sku"), CATALOG_FIELD_MAX_LEN)
+    model_number = _degrade_text(obs.get("model_number"), CATALOG_FIELD_MAX_LEN)
+    replacement_id = _degrade_text(obs.get("replacement_id"), CATALOG_FIELD_MAX_LEN)
 
     clearance = obs.get("clearance_price")
     listed = obs.get("list_price")

@@ -103,7 +103,12 @@ It, in order:
    `/root/.pennyrun-db.env`, mode `600`. Runs `db.migrate` then `db.seed`
    — both idempotent, safe on every run.
 6. Writes `/etc/pennyrun/ingest.env` with a random
-   `PENNYRUN_INGEST_TOKEN` (once; left alone after), mode `600`.
+   `PENNYRUN_INGEST_TOKEN` (once; left alone after), mode `600`. If this
+   run's own `PENNYRUN_INGEST_TOKEN` is set (a collector pointed at a
+   *different* droplet, see below), that token is written the same way
+   into its own `/etc/pennyrun/upstream-ingest.env`, mode `600` — never
+   embedded directly in a systemd unit, which would leave it world-
+   readable at the unit file's default permissions.
 7. Configures Caddy: `/api/*` reverse-proxies to the API,
    `/clearance.json` still serves the live file from `$PENNYRUN_DATA` (the
    app fetches it directly today — see "Why data lives outside the
@@ -121,13 +126,20 @@ It, in order:
    can't take the scan down with it, and both run under a shared `flock`
    (`/run/lock/pennyrun-sweep.lock`) so they still can't overlap — two
    sweeps hitting Home Depot from the same IP at once looks exactly like
-   the burst that gets an address range refused. **Discovery and the scan
-   are only *enabled* when step 4 found `GOOD`** — installed either way,
-   so turning them on later (the check result changed, or you're pointing
-   this run's units at a different box's collection some other way) is
+   the burst that gets an address range refused. **All three timers —
+   discovery, scan, and harvest — are only *enabled* when step 4 found
+   `GOOD`**; harvest hits `www.homedepot.com/s/…` too (measured 403 from
+   a datacentre range, ~772 requests/week), so it's gated the same way,
+   not left to run unconditionally. Every timer is installed either way,
+   so turning them on later (the check result changed) is
    `sudo systemctl enable --now pennyrun-discover.timer
-   pennyrun-scan.timer`, not a re-run of this script. The harvest timer
-   is unaffected either way; it isn't gated.
+   pennyrun-scan.timer pennyrun-harvest.timer`, not a re-run of this
+   script. On `BLOCKED` specifically, this run also *disables* all three
+   if an earlier run on this box left them enabled — a confirmed refusal
+   must not leave last night's timers still firing. `UNKNOWN` never
+   touches them either way: it isn't evidence of a refusal, and a
+   transient local blip must not silently kill a collector that's
+   otherwise been working.
 
 Re-running the whole script is safe: packages, the venv, the database
 role/credential, the ingest token, and every systemd unit are all

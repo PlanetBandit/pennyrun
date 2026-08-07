@@ -318,3 +318,31 @@ def test_placeholder_never_clobbers_a_real_name(client):
                      headers={"Authorization": f"Bearer {TOKEN}"})
     assert r2.json()["accepted"] == 1
     assert client.get(f"/api/v1/item/{item_id}").json()["name"] == "Real Product Name"
+
+
+# --- Re-review, Medium 2 -------------------------------------------------
+#
+# A bad *catalogue* field (category/canonical_url/upc/store_sku/
+# model_number/replacement_id) must degrade, not reject -- `observation`
+# is append-only, so rejecting the whole row over a decorative field
+# would drop the price permanently. Proven here at the API layer, not
+# just in api/validate.py's own unit tests: the row must still be
+# accepted, and the price must still be readable back.
+
+
+def test_bad_catalogue_field_degrades_but_the_row_and_price_still_land(client):
+    item_id = "555000333"
+    body = {"observations": [
+        {"item_id": item_id, "store_id": "2502", "clearance_price": "1.00",
+         "list_price": "2.00", "upc": 791308000105,  # numeric, not a string
+         "canonical_url": "x" * 1000}]}  # far past URL_MAX_LEN
+
+    r = client.post("/api/v1/discovery", json=body,
+                    headers={"Authorization": f"Bearer {TOKEN}"})
+    assert r.status_code == 200
+    assert r.json() == {"accepted": 1, "rejected": 0}
+
+    got = client.get(f"/api/v1/item/{item_id}")
+    assert got.status_code == 200
+    assert got.json()["upc"] is None
+    assert got.json()["prices"][0]["clearance_price"] == "1.00"
