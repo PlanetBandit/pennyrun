@@ -527,6 +527,11 @@ input,select,textarea{font-family:inherit;font-size:16px}
       ⟳ Check prices at my stores
     </button>
 
+    <div id="pushrow" hidden style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+      <button class="btn btn--ghost btn--sm" id="pushbtn">🔔 Notify me when checks finish</button>
+      <span class="scan__hint" id="pushnote" style="margin:0"></span>
+    </div>
+
     <p class="scan__hint" id="sweepsum" style="margin:8px 0"></p>
     <div id="sweeplist"></div>
     <div style="display:flex;gap:6px;margin-top:8px">
@@ -1516,6 +1521,96 @@ var CATALOG = null;
    cannot honour -- if the collector has not checked in, say so.
    ============================================================ */
 var API = "/api/v1";
+
+/* A stable id for this install. Not an identity claim and nothing trusts it --
+   it only decides which device gets told when a check finishes. */
+function deviceId(){
+  var k = "pennyrun.device";
+  var v = localStorage.getItem(k);
+  if(!v){
+    v = (crypto.randomUUID && crypto.randomUUID()) ||
+        ("xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function(c){
+          var r = Math.random() * 16 | 0;
+          return (c === "x" ? r : (r & 0x3 | 0x8)).toString(16);
+        }));
+    try { localStorage.setItem(k, v); } catch(_){ }
+  }
+  return v;
+}
+
+/* iOS gives push only to a PWA installed to the home screen -- a plain Safari
+   tab cannot subscribe at all. Offering a button that silently cannot work is
+   worse than not offering one, so check before showing anything. */
+function isInstalled(){
+  return (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches)
+      || window.navigator.standalone === true;
+}
+
+function pushSupported(){
+  return isInstalled() && "serviceWorker" in navigator &&
+         "PushManager" in window && "Notification" in window;
+}
+
+function b64ToBytes(b64){
+  var pad = "=".repeat((4 - b64.length % 4) % 4);
+  var raw = atob((b64 + pad).replace(/-/g, "+").replace(/_/g, "/"));
+  return Uint8Array.from(raw, function(c){ return c.charCodeAt(0); });
+}
+
+/* MUST be called straight from a tap. Safari silently no-ops
+   requestPermission() outside a user gesture, and a denial is permanent --
+   there is no second prompt from JavaScript, ever. So this is wired to an
+   explicit button, never to page load. */
+function enablePush(btn){
+  if(!pushSupported()){
+    $("pushnote").textContent = isInstalled()
+      ? "This browser doesn't support notifications."
+      : "Add Penny Run to your home screen first — iOS only allows notifications for installed apps.";
+    return;
+  }
+  btn.disabled = true;
+  $("pushnote").textContent = "Asking…";
+  Notification.requestPermission().then(function(perm){
+    if(perm !== "granted"){
+      $("pushnote").textContent = perm === "denied"
+        ? "Notifications are blocked. iOS won't ask again — turn them on in Settings → Apps → Penny Run."
+        : "Not enabled.";
+      btn.disabled = false;
+      return;
+    }
+    return apiJSON("/push/key").then(function(k){
+      return navigator.serviceWorker.ready.then(function(reg){
+        return reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: b64ToBytes(k.key)
+        });
+      });
+    }).then(function(sub){
+      return apiJSON("/push/subscribe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ device_id: deviceId(), subscription: sub.toJSON() })
+      });
+    }).then(function(){
+      $("pushnote").textContent = "On — we'll tell you when a check finishes.";
+      $("pushbtn").hidden = true;
+    });
+  }).catch(function(e){
+    $("pushnote").textContent = "Couldn't turn on notifications: " + e.message;
+    btn.disabled = false;
+  });
+}
+
+function renderPushRow(){
+  var wrap = $("pushrow");
+  if(!wrap) return;
+  wrap.hidden = !isInstalled();
+  if(!isInstalled()) return;
+  if(Notification.permission === "granted"){
+    $("pushbtn").hidden = true;
+    $("pushnote").textContent = "Notifications are on.";
+  }
+}
 var chkTimer = null, chkJobs = [], chkStores = [];
 
 function apiJSON(path, opts){
@@ -1563,7 +1658,7 @@ function startCheck(){
   apiJSON("/checks", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ store_ids: picked })
+    body: JSON.stringify({ store_ids: picked, device_id: deviceId() })
   }).then(function(res){
     chkJobs = res.queued || [];
     chkStores = picked.map(function(id){
@@ -2361,6 +2456,8 @@ $("scanstores").addEventListener("click", function(){
 });
 
 $("chkgo").addEventListener("click", startCheck);
+$("pushbtn").addEventListener("click", function(){ enablePush(this); });
+renderPushRow();
 $("catbtn").addEventListener("click", function(){
   if(sweepSource === "catalog" && sweepList.length){
     sweepList = []; renderSweep(); return;

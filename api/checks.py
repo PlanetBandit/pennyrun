@@ -24,6 +24,7 @@ Three rules shape everything here:
   countdown that never runs down is the same lie as reporting stores that were
   never priced.
 """
+import logging
 import os
 import uuid
 
@@ -32,6 +33,7 @@ from fastapi import APIRouter, Header, HTTPException
 from api.db import rows
 from api.ingest import authorise
 
+log = logging.getLogger("pennyrun.checks")
 router = APIRouter()
 V = "/api/v1"
 
@@ -277,11 +279,26 @@ def finish(job_id: int, payload: dict, authorization: str = Header(None)):
         cur.execute("select device_id from check_watcher where job_id = %s", (job_id,))
         watchers = [r["device_id"] for r in cur.fetchall()]
 
-    # Push lands here once it exists. Returning the list now means the
-    # collector's report already carries who would have been told, which makes
-    # the wiring testable before any notification is sent.
+    # Best effort, and deliberately after the transaction: a push that fails
+    # must never fail the report, or a collector that priced a store perfectly
+    # well would be told its job did not land. GET /checks/{id} is the durable
+    # path; this is the courtesy on top.
+    sent = pruned = 0
+    if watchers:
+        from api.push import send_to_devices
+        name = got["store_id"]
+        if got["state"] == "done":
+            title, body = "Prices updated", f"{name} is current — {got['hits'] or 0} on clearance"
+        else:
+            title, body = "Check didn't finish", f"Home Depot didn't answer for {name}"
+        try:
+            sent, pruned = send_to_devices(watchers, title, body, url="/#checked")
+        except Exception:                            # noqa: BLE001
+            log.warning("notifying watchers of job %s failed", job_id)
+
     return {"job_id": got["job_id"], "store_id": got["store_id"],
-            "state": got["state"], "watchers": len(watchers)}
+            "state": got["state"], "watchers": len(watchers),
+            "notified": sent, "pruned": pruned}
 
 
 @router.get(V + "/checks/{job_id}")

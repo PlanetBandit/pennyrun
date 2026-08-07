@@ -6,8 +6,10 @@ V = "/api/v1"
 
 from api.ingest import router as ingest_router
 from api.checks import router as checks_router
+from api.push import router as push_router
 app.include_router(ingest_router)
 app.include_router(checks_router)
+app.include_router(push_router)
 
 LATEST = """
 select distinct on (o.item_id, o.store_id)

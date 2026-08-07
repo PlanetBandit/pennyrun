@@ -5,3 +5,4 @@ fastapi
 uvicorn[standard]
 httpx
 certifi
+pywebpush

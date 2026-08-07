@@ -2,7 +2,7 @@
    Everything the app needs is local, so one pass at install
    makes the whole thing work with zero bars in the store. */
 
-var CACHE = "pennyrun-v57";
+var CACHE = "pennyrun-v58";
 var ASSETS = [
   "./",
   "./index.html",
@@ -88,6 +88,45 @@ self.addEventListener("fetch", function(e){
       }).catch(function(){
         return caches.match("./index.html");
       });
+    })
+  );
+});
+
+/* ---------------------------------------------------------------- push
+
+   showNotification() MUST be inside event.waitUntil(). Without it iOS treats
+   the push as silent and revokes the subscription after about three of them --
+   spec-compliant, undocumented in the place you'd look, and it bites almost
+   everyone once. The whole subscription dies, quietly, and the only symptom is
+   that notifications stop.
+
+   Every push also shows something. A push that decides it has nothing worth
+   showing is exactly the "silent push" that gets counted against you. */
+self.addEventListener("push", function(e){
+  var d = { title: "Penny Run", body: "", url: "/" };
+  try { if(e.data) d = Object.assign(d, e.data.json()); } catch(_){ }
+  e.waitUntil(
+    self.registration.showNotification(d.title, {
+      body: d.body,
+      icon: "./icon-192.png",
+      badge: "./icon-192.png",
+      tag: "pennyrun",
+      data: { url: d.url }
+    })
+  );
+});
+
+/* Tapping the notification should land in the open app if there is one,
+   rather than opening a second copy. */
+self.addEventListener("notificationclick", function(e){
+  e.notification.close();
+  var target = (e.notification.data && e.notification.data.url) || "/";
+  e.waitUntil(
+    clients.matchAll({ type: "window", includeUncontrolled: true }).then(function(list){
+      for(var i = 0; i < list.length; i++){
+        if("focus" in list[i]) return list[i].focus();
+      }
+      if(clients.openWindow) return clients.openWindow(target);
     })
   );
 });
