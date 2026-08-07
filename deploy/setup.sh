@@ -267,8 +267,18 @@ if ! grep -q "^import sites/\*" /etc/caddy/Caddyfile 2>/dev/null; then
 	printf '\nimport sites/*\n' >> /etc/caddy/Caddyfile
 fi
 
-caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1 \
-	|| die "caddy rejected the config; nothing was restarted"
+CADDY_ERR=$(caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile 2>&1) \
+	|| die "caddy rejected the config; nothing was restarted:
+$CADDY_ERR"
+
+# `caddy validate` runs as root here and opens the log writer to check it,
+# which CREATES /var/log/caddy/pennyrun.log owned by root:root 0600. The
+# caddy service then runs as User=caddy and cannot write its own log, so it
+# exits 1 with "permission denied" and the site never comes up -- with a
+# Caddyfile that just validated cleanly, which makes it a confusing failure.
+# Re-chown after validate, not only before it.
+chown -R caddy:caddy /var/log/caddy
+
 systemctl enable caddy >/dev/null
 systemctl reload caddy 2>/dev/null || systemctl restart caddy
 
