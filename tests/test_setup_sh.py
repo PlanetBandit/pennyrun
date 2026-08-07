@@ -46,6 +46,32 @@ def test_discover_and_scan_are_wrapped_in_the_same_flock():
     assert " -n " not in scan_exec
 
 
+def test_lock_wait_time_is_budgeted_on_top_of_run_time_not_instead_of_it():
+    """systemd starts a unit's TimeoutStartSec clock at ExecStart, which
+    for both units is the moment `flock $LOCK` starts *blocking* -- not
+    the moment the sweep itself begins. A TimeoutStartSec of just
+    SWEEP_RUN_BUDGET would let systemd SIGTERM a scan that waited out a
+    full discover run after only ~10 real minutes of work instead of the
+    90 it was sized for. Both units need SWEEP_RUN_BUDGET (wait) +
+    SWEEP_RUN_BUDGET (run) = SWEEP_LOCK_TIMEOUT, not SWEEP_RUN_BUDGET on
+    its own."""
+    text = _read()
+
+    run_budget = re.search(r"^SWEEP_RUN_BUDGET=(\d+)$", text, re.M)
+    lock_timeout = re.search(r"^SWEEP_LOCK_TIMEOUT=\$\(\(SWEEP_RUN_BUDGET \* 2\)\)$", text, re.M)
+    assert run_budget, "expected a SWEEP_RUN_BUDGET=<seconds> assignment"
+    assert lock_timeout, "expected SWEEP_LOCK_TIMEOUT derived as SWEEP_RUN_BUDGET * 2"
+
+    discover = _unit_block("pennyrun-discover.service", text)
+    scan = _unit_block("pennyrun-scan.service", text)
+    assert re.search(r"^TimeoutStartSec=\$SWEEP_LOCK_TIMEOUT$", discover, re.M)
+    assert re.search(r"^TimeoutStartSec=\$SWEEP_LOCK_TIMEOUT$", scan, re.M)
+    # Neither unit's timeout may be hardcoded back down to just the run
+    # budget -- that's exactly the bug being guarded against here.
+    assert "TimeoutStartSec=$SWEEP_RUN_BUDGET" not in discover
+    assert "TimeoutStartSec=$SWEEP_RUN_BUDGET" not in scan
+
+
 def test_scan_gets_a_default_api_url_and_the_ingest_token():
     """A systemd unit does not inherit anyone's login environment --
     scan() only uploads when PENNYRUN_API and PENNYRUN_INGEST_TOKEN are
@@ -61,17 +87,35 @@ def test_scan_gets_a_default_api_url_and_the_ingest_token():
     assert re.search(r"^EnvironmentFile=-\$INGEST_ENV$", scan, re.M)
 
 
-def test_old_combined_sweep_unit_is_retired():
+def test_old_combined_sweep_unit_is_retired_before_new_units_are_installed():
     """Pre-Task-9 boxes have pennyrun-sweep.{service,timer}: one unit
     running `discover scan` together through /usr/bin/python3, which
     never had curl_cffi. Left in place it's a red unit every night at the
     same minute pennyrun-scan.timer now runs, and upgrading is supposed
-    to be safe to re-run, not leave a dead unit behind."""
+    to be safe to re-run, not leave a dead unit behind. A plain substring
+    check can't tell a real, existence-guarded removal from the same
+    words sitting in a comment or dead code, so this parses the actual
+    `if [ -f ... ]; then ... fi` block and checks both commands are
+    inside it -- and that the whole block runs before the replacement
+    units are written, not after."""
     text = _read()
-    assert ("systemctl disable --now pennyrun-sweep.timer "
-            "pennyrun-sweep.service") in text
-    assert ("rm -f /etc/systemd/system/pennyrun-sweep.timer "
-            "/etc/systemd/system/pennyrun-sweep.service") in text
+    m = re.search(
+        r"if \[ -f /etc/systemd/system/pennyrun-sweep\.timer \] \|\| "
+        r"\[ -f /etc/systemd/system/pennyrun-sweep\.service \]; then\n"
+        r"(.*?)\nfi\n", text, re.S)
+    assert m, "no existence-guarded removal block for the old pennyrun-sweep unit"
+    body = m.group(1)
+
+    assert re.search(
+        r"^\tsystemctl disable --now pennyrun-sweep\.timer pennyrun-sweep\.service\b",
+        body, re.M), "disable --now must be inside the guarded block, not just present somewhere"
+    assert re.search(
+        r"^\trm -f /etc/systemd/system/pennyrun-sweep\.timer "
+        r"/etc/systemd/system/pennyrun-sweep\.service$",
+        body, re.M), "rm -f must be inside the guarded block, not just present somewhere"
+
+    assert text.index(m.group(0)) < text.index("write_unit pennyrun-discover.service"), \
+        "the old unit must be retired before the new ones are installed"
 
 
 def test_api_service_is_installed_and_started():
@@ -83,12 +127,58 @@ def test_api_service_is_installed_and_started():
     assert "EnvironmentFile=$INGEST_ENV" in api
 
 
-def test_database_and_migrations_are_provisioned():
+def _db_setup_block(text):
+    m = re.search(r'if \[ ! -f "\$DB_ENV" \]; then\n(.*?)\nelse\n', text, re.S)
+    assert m, 'no guarded database-credential block (gated on "$DB_ENV" absence)'
+    return m.group(1)
+
+
+def test_database_role_and_credential_are_created_inside_the_guard():
+    """A bare substring check can't tell 'create role' guarding real
+    provisioning from the same words in a comment, or catch them running
+    unconditionally (which would error on every re-run once the role
+    already exists). This parses the actual `if [ ! -f "$DB_ENV" ]`
+    block and checks the role, its password, the database and the
+    credential file write are all inside it."""
+    body = _db_setup_block(_read())
+    assert re.search(r'create role \\"\$DB_ROLE\\" login', body)
+    assert re.search(r'create database \\"\$DB_NAME\\" owner \\"\$DB_ROLE\\"', body)
+    assert re.search(r'> "\$DB_ENV"\)?$', body, re.M), \
+        "the credential file must be written inside the guard, not after it"
+
+
+def test_role_password_is_synced_even_when_the_role_already_existed():
+    """If $DB_ENV is deleted by hand but the `pennyrun` role survives,
+    `create role` is skipped (it already exists) -- but a fresh
+    PENNYRUN_DB_URL with a *new* random password still gets written
+    unless something also pushes that password onto the role. Without
+    this, db.migrate fails immediately (loud, set -euo pipefail catches
+    it) but the mismatched file is left on disk, and the next restart of
+    pennyrun-api.service -- which might be days later -- crash-loops
+    with no self-repair. `alter role ... password` must run
+    unconditionally in this block, not only inside the `create role`
+    fallback, so the role's password always matches what's about to be
+    written to $DB_ENV regardless of whether it was just created."""
+    body = _db_setup_block(_read())
+    alter = re.search(r'^\tsudo -u postgres psql -c \\\n\t\t"alter role \\"\$DB_ROLE\\" password \'\$DB_PASS\'"',
+                       body, re.M)
+    assert alter, "alter role ... password '$DB_PASS' must run in the guarded block"
+
+    # It must not be nested inside the `create role` fallback (the `||`
+    # branch) -- that would only run it when the role was just created,
+    # which is exactly the case that already works today.
+    create_role_line = re.search(r'^\t\t\| grep -q 1 \|\| sudo -u postgres psql -c \\\n(\t\t"create role.*"[^\n]*)$',
+                                  body, re.M)
+    assert create_role_line, "expected the create-role fallback line"
+    assert "alter role" not in create_role_line.group(1)
+
+
+def test_migrations_and_seed_run_via_the_venv_python_module_form():
     text = _read()
-    assert "create role" in text
-    assert "create database" in text
-    assert "-m db.migrate" in text
-    assert "-m db.seed" in text
+    assert '"$DIR/.venv/bin/python" -m db.migrate' in text
+    assert '"$DIR/.venv/bin/python" -m db.seed' in text
+    assert text.index("-m db.migrate") < text.index("-m db.seed"), \
+        "migrations must run before seeding"
 
 
 def test_ingest_token_and_db_credential_are_never_world_or_group_readable():

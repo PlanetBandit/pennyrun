@@ -39,6 +39,24 @@ DB_ENV=/root/.pennyrun-db.env
 INGEST_ENV=/etc/pennyrun/ingest.env
 LOCK=/run/lock/pennyrun-sweep.lock
 
+# How long discover/scan get to actually run once they're going, and the
+# TimeoutStartSec each of their units needs as a result. These are not the
+# same number: systemd starts a unit's timeout clock the moment ExecStart
+# is invoked, which for both units is the moment `flock $LOCK` starts
+# *blocking* -- not the moment the sweep itself begins. Whichever unit
+# starts second can lose up to SWEEP_RUN_BUDGET seconds just waiting for
+# the other to release the lock (each unit's own run is bounded at
+# SWEEP_RUN_BUDGET, so that's the most it can ever wait), and then still
+# needs a full SWEEP_RUN_BUDGET of its own once it acquires the lock. A
+# TimeoutStartSec of just SWEEP_RUN_BUDGET would let systemd SIGTERM a
+# scan that waited out a full discover run after only ~10 real minutes of
+# work instead of the 90 it was sized for. SWEEP_LOCK_TIMEOUT = wait +
+# run = SWEEP_RUN_BUDGET * 2, applied to both units symmetrically since
+# either could in principle be the one waiting (a human firing one of
+# them manually while the other is mid-run, not just the nightly order).
+SWEEP_RUN_BUDGET=5400
+SWEEP_LOCK_TIMEOUT=$((SWEEP_RUN_BUDGET * 2))
+
 die() { echo "setup: $*" >&2; exit 1; }
 say() { echo "==> $*"; }
 
@@ -145,7 +163,20 @@ if [ ! -f "$DB_ENV" ]; then
 	DB_PASS="$(openssl rand -hex 24)"
 	sudo -u postgres psql -tAc "select 1 from pg_roles where rolname='$DB_ROLE'" \
 		| grep -q 1 || sudo -u postgres psql -c \
-		"create role \"$DB_ROLE\" login password '$DB_PASS'" >/dev/null
+		"create role \"$DB_ROLE\" login" >/dev/null
+	# Unconditional, whether the role above was just created or already
+	# existed (e.g. $DB_ENV was deleted by hand while the role survived).
+	# Without this, a pre-existing role keeps its old password while a
+	# fresh random one gets written to $DB_ENV below -- db.migrate fails
+	# loudly right now (set -euo pipefail catches it), but the mismatched
+	# file is left on disk, "already exists" on every later run, and the
+	# next restart of pennyrun-api.service (a reboot, a crash, a manual
+	# restart -- not necessarily today) reads the wrong password and
+	# crash-loops with no self-repair. Setting the password here keeps
+	# the role and the file it's about to be written into in sync at the
+	# moment of writing, every time.
+	sudo -u postgres psql -c \
+		"alter role \"$DB_ROLE\" password '$DB_PASS'" >/dev/null
 	sudo -u postgres psql -tAc "select 1 from pg_database where datname='$DB_NAME'" \
 		| grep -q 1 || sudo -u postgres psql -c \
 		"create database \"$DB_NAME\" owner \"$DB_ROLE\"" >/dev/null
@@ -251,16 +282,18 @@ say "installing timers (discover ${HOUR}:00, scan ${HOUR}:10, harvest Sundays 04
 # WORKERS=20 each, from one residential IP, hitting apionline.homedepot.com
 # simultaneously looks exactly like the burst that gets a datacentre range
 # refused (tools/README.md, "Where it can run"). discover fires at
-# ${HOUR}:00 with up to a 90-minute budget; scan fires ten minutes later
-# and could easily start while discover is still going. Both ExecStarts
-# below run under `flock $LOCK`, which serialises them against each other:
-# whichever starts second blocks (no -n) until the first releases the
-# lock, rather than either failing outright or the two running
-# concurrently. A plain `Conflicts=` was the other option here and was
-# rejected -- it stops whichever unit is already running the moment the
-# other one starts, throwing away a partially-completed discover or scan
-# instead of letting it finish. Each unit's own TimeoutStartSec still
-# bounds how long a wait (or a run) can take.
+# ${HOUR}:00; scan fires ten minutes later and could easily start while
+# discover is still going. Both ExecStarts below run under `flock $LOCK`,
+# which serialises them against each other: whichever starts second
+# blocks (no -n) until the first releases the lock, rather than either
+# failing outright or the two running concurrently. A plain `Conflicts=`
+# was the other option here and was rejected -- it stops whichever unit
+# is already running the moment the other one starts, throwing away a
+# partially-completed discover or scan instead of letting it finish.
+# TimeoutStartSec is SWEEP_LOCK_TIMEOUT (see above), not SWEEP_RUN_BUDGET
+# -- it has to cover a worst-case wait for the lock *and* a full run once
+# it's acquired, since systemd's timeout clock starts at `flock`, not at
+# the sweep itself.
 write_unit pennyrun-discover.service <<EOF
 [Unit]
 Description=Penny Run nightly catalogue discovery
@@ -273,7 +306,7 @@ User=$RUN_AS
 WorkingDirectory=$DIR
 Environment=PENNYRUN_DATA=$DATA
 ExecStart=/usr/bin/flock $LOCK $DIR/.venv/bin/python -m tools.sweep discover
-TimeoutStartSec=5400
+TimeoutStartSec=$SWEEP_LOCK_TIMEOUT
 Nice=10
 EOF
 
@@ -319,7 +352,11 @@ EnvironmentFile=-$INGEST_ENV
 # sitemap only means the hot list didn't grow tonight, not that the pool
 # can't be priced.
 ExecStart=/usr/bin/flock $LOCK $DIR/.venv/bin/python -m tools.sweep scan
-TimeoutStartSec=5400
+# SWEEP_LOCK_TIMEOUT, not SWEEP_RUN_BUDGET -- see the comment above
+# pennyrun-discover.service. Without it, a scan that waited out a full
+# discover run gets SIGTERM'd after ~10 real minutes instead of the 90 it
+# was sized for.
+TimeoutStartSec=$SWEEP_LOCK_TIMEOUT
 Nice=10
 EOF
 
