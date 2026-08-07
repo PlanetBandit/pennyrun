@@ -92,6 +92,15 @@ PAGES = [0, 24, 48, 72]
 # looks at the run's own chunks instead.)
 DISCOVER_ABORT_THRESHOLD = 0.5
 
+# scan()'s circuit breaker. A store that comes back this refused is not a
+# store with nothing on clearance -- it is Home Depot declining to talk to
+# this address, and every further request deepens that. Measured on the run
+# of 2026-08-07: the refusal rate climbed 7% -> 8% -> 7% -> 10% across four
+# stores and then went to 100%, and the scan spent 2,348 more requests --
+# half the night's traffic -- on four stores that had already stopped
+# answering. Stop at the wall instead of leaning on it.
+SCAN_ABORT_THRESHOLD = 0.5
+
 # How much of the catalogue to price per discover run. Measured at roughly
 # 330 products/sec here, so 60k is a few minutes locally and under fifteen on
 # a hosted runner. Raise it if the nightly job has room.
@@ -439,32 +448,93 @@ def row(p, sid, meta, before):
             ident.get("modelNumber") or "", superseded, dropped]
 
 
+def chunks_for(n):
+    """How many API requests pricing n products takes."""
+    return -(-n // BATCH)
+
+
+def price_at(sid, name, ids, meta, before, note=""):
+    """Price `ids` at one store. Returns (rows, refusal_rate)."""
+    s0 = time.time()
+    run = in_batches(ids, lambda chunk, s=sid:
+                     [r for r in (row(p, s, meta, before) for p in call(chunk, s)) if r])
+    bad = run.refused + run.unreachable
+    rate = bad / run.chunks if run.chunks else 0.0
+    if bad:
+        say("  %-16s %5d hits in %5.1fs  (%d/%d chunks refused, %d unreachable)%s"
+            % (name, len(run.out), time.time() - s0, run.refused, run.chunks,
+               run.unreachable, note))
+    else:
+        say("  %-16s %5d hits in %5.1fs%s"
+            % (name, len(run.out), time.time() - s0, note))
+    return run.out, rate
+
+
 def scan():
     pool = load_pool()
     hot = read(HOT, {})
     meta = {p[1]: [p[0], p[2]] for p in pool}
     for pid, v in hot.items():
         meta.setdefault(pid, [v.get("name", ""), v.get("cat", "")])
-    ids = sorted(set([p[1] for p in pool]) | set(hot))
-    if not ids:
+
+    # Two tiers, because they earn their requests at wildly different rates.
+    # Measured 2026-08-07 across the four stores that answered before the
+    # address was cut off:
+    #
+    #     hot list    1,288 items -> 1,173 on clearance somewhere  (91.1%)
+    #     cold pool   8,097 items ->     0 on clearance anywhere   ( 0.00%)
+    #
+    # Pricing the cold pool at every store spent 86% of the run's requests to
+    # find nothing at all. That is not bad luck: anything that goes on
+    # clearance is promoted to the hot list and priced everywhere from then
+    # on, so what is left in the cold pool has already been mined. It is
+    # worth re-checking slowly, not eight times a night.
+    hot_ids = sorted(hot)
+    cold_ids = sorted({p[1] for p in pool} - set(hot))
+    if not hot_ids and not cold_ids:
         die("nothing to scan -- run the harvest stage first")
 
     stores = json.load(open(STORES))
     before = previous_prices()
-    say("scan: %d products (%d harvested + %d on the hot list) x %d stores"
-        % (len(ids), len(pool), len(hot), len(stores)))
+    cur = read(CURSOR, {})
+    turn = cur.get("scan_store", 0) % len(stores)
 
-    hits, t0 = [], time.time()
-    for sid, name in stores:
-        s0 = time.time()
-        run = in_batches(ids, lambda chunk, s=sid:
-                         [r for r in (row(p, s, meta, before) for p in call(chunk, s)) if r])
-        hits += run.out
-        if run.refused or run.unreachable:
-            say("  %-16s %4d hits in %5.1fs  (%d/%d chunks refused, %d unreachable)"
-                % (name, len(run.out), time.time() - s0, run.refused, run.chunks, run.unreachable))
+    planned = chunks_for(len(hot_ids)) * len(stores) + chunks_for(len(cold_ids))
+    flat = chunks_for(len(hot_ids) + len(cold_ids)) * len(stores)
+    say("scan: %d hot x %d stores, then %d cold at %s only"
+        % (len(hot_ids), len(stores), len(cold_ids), stores[turn][1]))
+    say("scan: ~%d requests (pricing everything everywhere would be ~%d)"
+        % (planned, flat))
+
+    hits, t0, blocked = [], time.time(), False
+
+    # Tier 1: the hot list at every store. This is the tier that produces the
+    # list, so it runs first -- if the address gets cut off mid-run, the
+    # speculative half is what gets lost, not the useful half.
+    for i, (sid, name) in enumerate(stores):
+        got, rate = price_at(sid, name, hot_ids, meta, before)
+        hits += got
+        if rate >= SCAN_ABORT_THRESHOLD:
+            skipped = chunks_for(len(hot_ids)) * (len(stores) - i - 1) \
+                + chunks_for(len(cold_ids))
+            say("scan: %s refused %.0f%% of its chunks. That is this address "
+                "being blocked, not stores with nothing on clearance -- "
+                "stopping rather than firing %d more requests that cannot "
+                "succeed and only deepen it." % (name, 100 * rate, skipped))
+            blocked = True
+            break
+
+    # Tier 2: the cold pool at one rotating store, so every product still gets
+    # re-checked -- just over N nights instead of every night.
+    if cold_ids and not blocked:
+        sid, name = stores[turn]
+        got, rate = price_at(sid, name, cold_ids, meta, before, "  [cold pool]")
+        hits += got
+        if rate >= SCAN_ABORT_THRESHOLD:
+            say("scan: the cold sweep at %s was refused; leaving the rotation "
+                "where it is so this slice is retried, not skipped." % name)
         else:
-            say("  %-16s %4d hits in %5.1fs" % (name, len(run.out), time.time() - s0))
+            write(CURSOR, dict(cur, scan_store=(turn + 1) % len(stores)), small=True)
 
     if not hits:
         die("scan came back empty -- leaving the list already on file alone")
@@ -483,12 +553,18 @@ def scan():
     if len(hits) > len(shipped):
         say("scan: shipping %d of %d hits, spread across store and department"
             % (len(shipped), len(hits)))
-    write(OUT, {"harvested": TODAY, "pool_n": len(ids), "stores_n": len(stores),
-                "total_hits": len(hits), "hits": shipped}, small=True)
+    # stores_n is how many stores this run actually priced, not how many are
+    # configured -- a run stopped by the circuit breaker covered fewer, and
+    # the app should not be told otherwise.
+    covered = len({r[6] for r in hits})
+    write(OUT, {"harvested": TODAY, "pool_n": len(hot_ids) + len(cold_ids),
+                "stores_n": covered, "total_hits": len(hits), "hits": shipped},
+          small=True)
     save_prices(hits)
-    say("scan: %d hits across %d stores in %.1f min (%d dropped since the last sweep)"
-        % (len(hits), len(stores), (time.time() - t0) / 60,
-           sum(1 for r in hits if r[14] is not None)))
+    say("scan: %d hits across %d of %d stores in %.1f min (%d dropped since the last sweep)%s"
+        % (len(hits), covered, len(stores), (time.time() - t0) / 60,
+           sum(1 for r in hits if r[14] is not None),
+           "  -- STOPPED EARLY, this address was being refused" if blocked else ""))
 
     # clearance.json is already written above -- collection succeeding and
     # delivery to the droplet succeeding are different events, so an upload
