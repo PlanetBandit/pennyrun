@@ -1,7 +1,33 @@
 # In-browser price checker — design
 
+> ## ⛔ SUPERSEDED — the gate in §0 failed
+>
+> A real browser cannot call Home Depot's gateway cross-origin. Measured
+> 2026-08-07 in Firefox from `https://penny.premofusa.shop`:
+>
+> ```
+> Cross-Origin Request Blocked ... (Reason: CORS header
+> 'Access-Control-Allow-Origin' missing). Status code: 200.
+> ```
+>
+> The gateway requires `Content-Type: application/json`, which forces a
+> preflight, and Akamai's edge answers `OPTIONS` with **zero** CORS headers
+> (verified: 11 response headers, no `access-control-*`). The application
+> layer *does* send `ACAO: *` on real responses — but the browser never
+> reaches them. Three preflight-free routes were tried and all fail:
+> `GET` with query params → 403 at the edge; `POST` with `text/plain`,
+> with or without the experience-name param → 415 from the gateway.
+>
+> **The phone cannot be the collector.** Superseded by
+> `2026-08-07-queued-area-check-design.md`, which keeps the same user-facing
+> behaviour and moves the requests to the residential collector.
+>
+> Kept as the record of why, and because §1 (iOS execution limits), §5
+> (server-side gaps) and §6 (push) remain accurate and are cited by the
+> successor.
+
 **Date:** 2026-08-07
-**Status:** Draft. **Blocked on one measurement — see §0.**
+**Status:** Superseded. **The gate in §0 failed — see the banner above.**
 **Goal:** a user picks their area, taps "check my stores", and their own phone
 prices the candidate list at those stores against Home Depot, then contributes
 the results to everyone.
