@@ -10,12 +10,31 @@ connection refused, DNS, a 5xx from Caddy/uvicorn) but never retries a 4xx:
 (bad token, bad shape), and hammering it again wastes the retry budget on
 something that will never succeed. This makes `send()` at-least-once, not
 exactly-once -- a batch that timed out *after* the droplet already
-committed it gets sent again, and `api/ingest.py`'s docstring already
-covers why that is the right tradeoff (a duplicate observation row costs
-nothing a dedup query can't handle later; a silently dropped night of
-collection is the failure worth avoiding). Retrying only widens the window
-in which that duplicate can happen -- it does not introduce it, since a
-single unretried request could already time out after committing.
+committed it gets sent again on retry. That is a deliberate tradeoff, not
+a free one: a duplicate `observation` row is invisible to every read
+endpoint today (`api/main.py`'s `LATEST` is `distinct on (item_id,
+store_id) order by observed_at desc`, so a duplicate just loses a tiebreak
+against itself), but Plan 3's penny-prediction work reads `observation` as
+raw history, where a duplicated row inflates a frequency signal without
+representing a second real observation. Retrying only widens the window in
+which that duplicate can happen -- it does not introduce it, since a
+single unretried request could already time out after committing -- but
+the bill is real and deferred, not absent. `TIMEOUT` is set to match
+`api/ingest.py`'s original single-attempt budget (120s) rather than
+something shorter: a shorter per-attempt timeout would trigger this retry
+-- and mint a duplicate -- more often, on nothing worse than a batch that
+was simply still being committed when the client gave up.
+
+`send()` does not swallow a chunk that exhausts its retries into a bare
+exception, either: chunks before it already committed, permanently (no
+`on conflict do nothing`, no delete path -- see `api/ingest.py`), and a
+caller that doesn't know how much of the batch got through would either
+under-report (silently drop the rest of a night's rows) or, if it just
+resends everything on the next run, duplicate every already-committed
+chunk on top of the one duplicate the timeout may already have caused.
+`UploadError.partial` carries the accepted/rejected counts from every
+chunk that succeeded before the failing one, so whoever is watching (or
+re-running) knows where it stopped.
 """
 import json
 import time
@@ -25,7 +44,26 @@ import urllib.request
 CHUNK = 1000
 MAX_ATTEMPTS = 3
 BACKOFF = 2  # seconds; doubles each retry
-TIMEOUT = 30  # seconds per attempt
+TIMEOUT = 120  # seconds per attempt -- see module docstring
+
+
+class UploadError(Exception):
+    """Raised by `send()` when a chunk exhausts `_post`'s retries.
+
+    `partial` is the `{"accepted", "rejected"}` total from whatever
+    chunks committed before this one failed -- those rows are permanent,
+    so a caller catching this needs that number, not just the fact that
+    something went wrong. `cause` is the underlying exception from `_post`
+    (a `urllib.error.HTTPError`/`URLError`, or whatever transport failure
+    it last saw).
+    """
+
+    def __init__(self, partial, cause):
+        super().__init__(
+            f"stopped after {partial['accepted']} accepted, "
+            f"{partial['rejected']} rejected: {cause}")
+        self.partial = partial
+        self.cause = cause
 
 
 def to_observation(row):
@@ -61,7 +99,12 @@ def send(rows, base_url, token):
     total = {"accepted": 0, "rejected": 0}
     for i in range(0, len(rows), CHUNK):
         body = {"observations": [to_observation(r) for r in rows[i:i + CHUNK]]}
-        got = _post(url, body, token)
+        try:
+            got = _post(url, body, token)
+        except Exception as e:
+            # Everything before this chunk already committed -- surface
+            # what got through rather than losing it in a bare raise.
+            raise UploadError(dict(total), e) from e
         total["accepted"] += got.get("accepted", 0)
         total["rejected"] += got.get("rejected", 0)
     return total

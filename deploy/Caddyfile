@@ -4,10 +4,24 @@
 # point: iOS will not hand the camera to a page that is not a secure
 # context, so HTTPS is not optional for this app.
 #
-# setup.sh fills in the two placeholders.
+# setup.sh fills in the three placeholders.
 
 {$PENNYRUN_HOST} {
 	encode gzip zstd
+
+	# pennyrun/index.html still does `fetch("clearance.json")` directly --
+	# the app reading /api/* instead is a Plan 2 change that hasn't
+	# happened yet, so this handler and the /api/* one below both have to
+	# keep working at the same time. Remove this block once the app is
+	# switched over; until then, deleting it serves the checked-in,
+	# never-updated pennyrun/clearance.json to every phone instead of the
+	# data this box (or its sweep, over PENNYRUN_API) actually collected --
+	# worse than not shipping this deploy at all.
+	handle /clearance.json {
+		root * {$PENNYRUN_DATA}
+		header Cache-Control "no-cache"
+		file_server
+	}
 
 	handle /api/* {
 		# `POST /api/v1/discovery` accepts a batch of observations and each

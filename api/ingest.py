@@ -48,18 +48,33 @@ way.
    surfacing it, and a hidden drop is worse than a duplicate row or a
    counted rejection.
 
+   That duplicate is not free, though, just deferred: every read endpoint
+   today (`api/main.py`'s `LATEST`, `distinct on (item_id, store_id)
+   order by observed_at desc`) is blind to it -- a duplicate just loses a
+   tiebreak against itself, so it's genuinely invisible from here. Plan
+   3's penny-prediction work will read `observation` as raw history
+   instead, and there a duplicated row inflates a frequency signal
+   without a second real observation behind it. `tools/upload.py`'s retry
+   (Task 9) widens the window this can happen in -- it does not open it,
+   since a single unretried request could already time out after
+   committing -- but it makes the bill more likely to come due, not less.
+
 3. `validate.check`'s contract is "bad input raises `ValueError`, nothing
    else" -- but that contract can be violated by input we don't control
    (a bug in `validate.py`, or a shape it hasn't been taught about yet),
-   and when the discovery collector has no retry (Task 9's `upload.send`
-   doesn't), an uncaught exception here doesn't just reject one row, it
-   500s the whole chunk. The `except` around `validate.check` is
-   therefore broader than `ValueError` alone, as defense in depth on top
-   of `validate.py` doing the same hardening at the source. Likewise the
-   request envelope itself is untrusted shape, not just its rows: a
-   string where a list of observations should be raises `AttributeError`
-   from the first `.get()` if not checked explicitly first, so that
-   shape is rejected as a 400 before the loop ever starts.
+   and an uncaught exception here doesn't just reject one row, it 500s
+   the whole chunk -- costing every row still to come in it, not the one
+   that triggered it. (`tools/upload.py`'s retry treats a 500 as a
+   transport failure and retries the identical payload, which just 500s
+   again for the same reason and burns the retry budget -- it cannot
+   turn a server-side bug into a successful request.) The `except` around
+   `validate.check` is therefore broader than `ValueError` alone, as
+   defense in depth on top of `validate.py` doing the same hardening at
+   the source. Likewise the request envelope itself is untrusted shape,
+   not just its rows: a string where a list of observations should be
+   raises `AttributeError` from the first `.get()` if not checked
+   explicitly first, so that shape is rejected as a 400 before the loop
+   ever starts.
 """
 import hmac
 import logging

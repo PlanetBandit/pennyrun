@@ -1,9 +1,13 @@
 # Running Penny Run on your own droplet
 
-The droplet serves the app **and** runs the sweep, which is simpler than
-it sounds: the nightly job writes `clearance.json` straight into what the
-web server is already serving. No GitHub runner, no commit-and-deploy
-round trip, no waiting for Pages to rebuild.
+The droplet serves the app, the read/write API, and Postgres, and —
+on any box Home Depot hasn't blocked — runs the sweep straight into that
+same database. `deploy/setup.sh` is the **only** deploy path: it installs
+and configures all of it in one idempotent run, including standing up the
+database and starting the API service. There is no separate manual step
+for the API; an earlier draft of this deploy split "serve the app" and
+"stand up the API" into two procedures that could each write Caddy's main
+config file and collide. They're one script now.
 
 ## Before anything else: can the droplet talk to Home Depot?
 
@@ -56,15 +60,43 @@ git clone https://github.com/PlanetBandit/pennyrun.git /tmp/pennyrun
 sudo PENNYRUN_HOST=pennyrun.example.duckdns.org bash /tmp/pennyrun/deploy/setup.sh
 ```
 
-It installs Caddy and Python, creates a virtualenv and installs
-`tools/requirements.txt` into it, clones the repo to `/opt/pennyrun`,
-checks whether the host can reach Home Depot, serves the app over HTTPS,
-and installs three timers: catalogue discovery nightly at 05:00, the
-clearance scan nightly at 05:10, and the pool harvest on Sundays at
-04:10. Discovery and the scan are separate systemd units on purpose — a
-sitemap that Home Depot is challenging tonight makes `discover` exit
-non-zero, and that must never take the scan down with it. Re-running it
-is safe.
+It, in order:
+
+1. Installs Caddy, Python, `python3-venv` and **Postgres**, and clones the
+   repo to `/opt/pennyrun`.
+2. Creates a virtualenv and installs `api/requirements.txt` plus
+   `curl_cffi` into it (not `tools/requirements.txt` wholesale — that
+   would also pull in `pytest`/`httpx`, which nothing on a deploy box
+   ever runs).
+3. Retires `pennyrun-sweep.{service,timer}` if this box was set up by an
+   older version of this script — that combined unit predates the venv
+   and points at `/usr/bin/python3`, which never had `curl_cffi`.
+4. Checks whether the host can reach Home Depot (`GOOD`/`BLOCKED` —
+   the site and API still come up either way; see below).
+5. **Creates the `pennyrun` Postgres role and database** (a random
+   password, generated once and left alone on every re-run) and writes
+   `/root/.pennyrun-db.env`, mode `600`. Runs `db.migrate` then `db.seed`
+   — both idempotent, safe on every run.
+6. Writes `/etc/pennyrun/ingest.env` with a random
+   `PENNYRUN_INGEST_TOKEN` (once; left alone after), mode `600`.
+7. Configures Caddy: `/api/*` reverse-proxies to the API,
+   `/clearance.json` still serves the live file from `$PENNYRUN_DATA` (the
+   app fetches it directly today — see "Why data lives outside the
+   checkout" below), everything else is the static app.
+8. Installs and starts `pennyrun-api.service`.
+9. Installs three sweep timers: catalogue discovery nightly at 05:00, the
+   clearance scan nightly at 05:10 (which also uploads to this box's own
+   API, over `https://$PENNYRUN_HOST`, when a token is present — see
+   below), and the pool harvest on Sundays at 04:10. Discovery and the
+   scan are separate systemd units so a sitemap Home Depot is challenging
+   tonight can't take the scan down with it, but both run under a shared
+   `flock` (`/run/lock/pennyrun-sweep.lock`) so they still can't overlap
+   — two sweeps hitting Home Depot from the same IP at once looks exactly
+   like the burst that gets an address range refused.
+
+Re-running the whole script is safe: packages, the venv, the database
+role/credential, the ingest token, and every systemd unit are all
+written idempotently or left alone if already present.
 
 Knobs, all optional:
 
@@ -73,8 +105,16 @@ Knobs, all optional:
 | `PENNYRUN_HOST` | — | required, the hostname to serve |
 | `PENNYRUN_DIR` | `/opt/pennyrun` | where the checkout lives |
 | `PENNYRUN_DATA` | `/var/lib/pennyrun` | where sweep state lives |
-| `PENNYRUN_HOUR` | `05` | local hour the sweep runs |
+| `PENNYRUN_HOUR` | `05` | local hour discover/scan run |
 | `PENNYRUN_BRANCH` | `main` | branch to deploy |
+| `PENNYRUN_USER` | `pennyrun` | the service account everything runs as |
+| `PENNYRUN_DB_NAME` | `pennyrun` | Postgres database name |
+| `PENNYRUN_DB_ROLE` | `pennyrun` | Postgres role name |
+
+`/root/.pennyrun-db.env` and `/etc/pennyrun/ingest.env` are not
+knobs — their paths are fixed because `db/migrate.py`, `api/db.py` and
+`deploy/pennyrun-api.service` all hardcode the first, and the second is
+what `pennyrun-api.service` and `pennyrun-scan.service` both read.
 
 ## Day to day
 
@@ -100,16 +140,19 @@ directory reads them, then never touches them again.
 
 `clearance.json` is written to a temp file and renamed into place, so a
 concurrent reader of the data directory gets the old file whole rather
-than half of the new one. As of this deploy the Caddyfile no longer routes
-`/clearance.json` there — the app is meant to read `POST /api/v1/discovery`
-results back out through the read API instead, which is what
-`deploy/pennyrun-api.service` serves. **Until the app itself is updated to
-call the API (planned, not yet done), a machine set up with `setup.sh`
-will serve whatever `pennyrun/clearance.json` is checked into the deployed
-branch, not what its own sweep just found** — the live file in
-`$PENNYRUN_DATA` is still written every run, just not served by Caddy
-anymore. Don't be surprised if the app looks stale on a fresh `setup.sh`
-box until that follow-up lands.
+than half of the new one.
+
+`pennyrun/index.html` still fetches `/clearance.json` directly — the full
+app rewrite that switches it to the read API instead
+(`deploy/pennyrun-api.service`, `GET /api/v1/store/{id}/clearance`) is a
+later plan, not done yet. **The Caddyfile serves both at once on
+purpose**: `/clearance.json` from `$PENNYRUN_DATA` (this box's own sweep,
+or the seed copy if it hasn't swept yet) so the app keeps working today,
+and `/api/*` so the write path (and, later, the read path once the app
+catches up) works too. Do not remove the `/clearance.json` handler before
+the app itself stops asking for it — a machine still serving the app from
+the checked-in seed file with no way to ever refresh it is worse than not
+having the API route at all.
 
 ## Moving off GitHub Pages
 

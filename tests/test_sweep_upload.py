@@ -1,7 +1,7 @@
 import json
 import pathlib
 
-from tools import sweep
+from tools import sweep, upload
 
 FIX = pathlib.Path(__file__).parent / "fixtures"
 
@@ -82,3 +82,23 @@ def test_scan_upload_failure_does_not_fail_the_scan(tmp_path, monkeypatch):
     monkeypatch.setattr("tools.upload.send", broken_send)
     sweep.scan()  # must not raise
     assert out.exists()
+
+
+def test_scan_surfaces_partial_progress_on_a_mid_batch_failure(tmp_path, monkeypatch, capsys):
+    """A human re-running the scan after a partial upload failure needs to
+    know some rows already landed (permanently -- observation is append-
+    only) rather than assuming the whole batch needs resending blind."""
+    out = _scan_fixture(tmp_path, monkeypatch)
+    monkeypatch.setenv("PENNYRUN_API", "http://x")
+    monkeypatch.setenv("PENNYRUN_INGEST_TOKEN", "t")
+
+    def partial_send(rows, base, token):
+        raise upload.UploadError({"accepted": 7, "rejected": 1}, RuntimeError("timed out"))
+
+    monkeypatch.setattr("tools.upload.send", partial_send)
+    sweep.scan()  # must not raise
+
+    assert out.exists()
+    output = capsys.readouterr().out
+    assert "7 accepted" in output
+    assert "1 rejected" in output

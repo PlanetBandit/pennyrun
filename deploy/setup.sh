@@ -1,11 +1,21 @@
 #!/usr/bin/env bash
-# Stand Penny Run up on a fresh Ubuntu droplet: serve the app over HTTPS
-# and sweep Home Depot nightly straight into what is being served.
+# Stand Penny Run up on a fresh Ubuntu droplet: serve the app and the read/
+# write API over HTTPS, run Postgres, and -- on any box Home Depot hasn't
+# blocked -- sweep nightly straight into that same database.
 #
 #   sudo PENNYRUN_HOST=pennyrun.example.duckdns.org bash deploy/setup.sh
 #
+# This is the one deploy path. It installs Postgres, migrates and seeds
+# it, installs and starts the API, configures Caddy in front of both the
+# API and the static app, and installs the sweep timers. (An earlier
+# version of this task described a second, manual path -- SSH in and run
+# a block of commands by hand to stand up just the API. That path is
+# superseded: everything it did, this script now does too, idempotently,
+# alongside everything else.)
+#
 # Safe to re-run. It writes its own Caddy site file and its own systemd
-# units and leaves anything else on the box alone.
+# units, leaves an existing database credential alone, and leaves anything
+# else on the box alone.
 
 set -euo pipefail
 
@@ -15,7 +25,19 @@ DATA="${PENNYRUN_DATA:-/var/lib/pennyrun}"
 REPO="${PENNYRUN_REPO:-https://github.com/PlanetBandit/pennyrun.git}"
 BRANCH="${PENNYRUN_BRANCH:-main}"
 RUN_AS="${PENNYRUN_USER:-pennyrun}"
-HOUR="${PENNYRUN_HOUR:-05}"      # local hour the sweep runs
+HOUR="${PENNYRUN_HOUR:-05}"      # local hour discover/scan run
+DB_NAME="${PENNYRUN_DB_NAME:-pennyrun}"
+DB_ROLE="${PENNYRUN_DB_ROLE:-pennyrun}"
+
+# Fixed, not configurable: db/migrate.py's db_url() and api/db.py's rows()
+# both fall back to reading PENNYRUN_DB_URL out of this exact path when the
+# environment variable itself isn't set, so every systemd unit below that
+# touches the database points an EnvironmentFile at this same literal path
+# rather than a $DB_ENV knob that could drift from what the Python side
+# hardcodes.
+DB_ENV=/root/.pennyrun-db.env
+INGEST_ENV=/etc/pennyrun/ingest.env
+LOCK=/run/lock/pennyrun-sweep.lock
 
 die() { echo "setup: $*" >&2; exit 1; }
 say() { echo "==> $*"; }
@@ -28,7 +50,8 @@ say() { echo "==> $*"; }
 say "installing packages"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq curl git python3 python3-venv debian-keyring debian-archive-keyring apt-transport-https
+apt-get install -y -qq curl git python3 python3-venv postgresql sudo \
+	debian-keyring debian-archive-keyring apt-transport-https
 
 if ! command -v caddy >/dev/null; then
 	say "installing caddy"
@@ -67,7 +90,27 @@ if [ ! -x "$DIR/.venv/bin/python" ]; then
 	python3 -m venv "$DIR/.venv"
 fi
 "$DIR/.venv/bin/pip" install -q --upgrade pip
-"$DIR/.venv/bin/pip" install -q -r "$DIR/tools/requirements.txt"
+# api/requirements.txt covers fastapi/uvicorn/psycopg -- what the API and
+# db.migrate/db.seed need. curl_cffi (tools/requirements.txt) is the one
+# runtime dependency the sweep needs on top of that. Installed explicitly
+# rather than `-r tools/requirements.txt` wholesale so a deploy box doesn't
+# also pull in pytest and httpx, which nothing here ever runs.
+"$DIR/.venv/bin/pip" install -q -r "$DIR/api/requirements.txt" curl_cffi
+
+# ------------------------------------------------------- retire old units
+
+# Pre-Task-9 boxes have pennyrun-sweep.{service,timer}: one unit running
+# `discover scan` together through /usr/bin/python3, which never had
+# curl_cffi. Left alone it fails closed (an import error, not a bad
+# sweep) but keeps firing a red unit every night at ${HOUR}:10 -- the same
+# minute pennyrun-scan.timer now runs -- which is both noisy and exactly
+# the double-hit-Home-Depot-at-once problem the new lock below exists to
+# prevent. Remove it before installing anything new.
+if [ -f /etc/systemd/system/pennyrun-sweep.timer ] || [ -f /etc/systemd/system/pennyrun-sweep.service ]; then
+	say "retiring the old combined pennyrun-sweep unit"
+	systemctl disable --now pennyrun-sweep.timer pennyrun-sweep.service >/dev/null 2>&1 || true
+	rm -f /etc/systemd/system/pennyrun-sweep.timer /etc/systemd/system/pennyrun-sweep.service
+fi
 
 # Sweep state lives here, outside git, so a deploy is always a clean
 # fast-forward and never a conflict with last night's data.
@@ -94,6 +137,43 @@ if [ "$SWEEPABLE" = "no" ]; then
 	echo "    refused -- nothing here needs redoing."
 	echo
 fi
+
+# --------------------------------------------------------------- database
+
+say "postgres role, database and credentials"
+if [ ! -f "$DB_ENV" ]; then
+	DB_PASS="$(openssl rand -hex 24)"
+	sudo -u postgres psql -tAc "select 1 from pg_roles where rolname='$DB_ROLE'" \
+		| grep -q 1 || sudo -u postgres psql -c \
+		"create role \"$DB_ROLE\" login password '$DB_PASS'" >/dev/null
+	sudo -u postgres psql -tAc "select 1 from pg_database where datname='$DB_NAME'" \
+		| grep -q 1 || sudo -u postgres psql -c \
+		"create database \"$DB_NAME\" owner \"$DB_ROLE\"" >/dev/null
+	# umask, not a `>file` followed by a later chmod: the latter briefly
+	# leaves the password readable at the process's default umask (022 ->
+	# 644) between the write and the fixup. This never creates the file
+	# world- or group-readable in the first place.
+	(umask 077; printf 'PENNYRUN_DB_URL=postgresql://%s:%s@localhost/%s\n' \
+		"$DB_ROLE" "$DB_PASS" "$DB_NAME" > "$DB_ENV")
+else
+	say "  $DB_ENV already exists -- leaving the database credential alone"
+fi
+chmod 600 "$DB_ENV"  # self-heal a file that predates this fix
+
+say "applying migrations"
+(cd "$DIR" && "$DIR/.venv/bin/python" -m db.migrate)
+say "seeding stores and products"
+(cd "$DIR" && "$DIR/.venv/bin/python" -m db.seed)
+
+say "ingest token"
+mkdir -p /etc/pennyrun
+if [ ! -f "$INGEST_ENV" ]; then
+	(umask 077; printf 'PENNYRUN_INGEST_TOKEN=%s\n' \
+		"$(openssl rand -hex 24)" > "$INGEST_ENV")
+else
+	say "  $INGEST_ENV already exists -- leaving the ingest token alone"
+fi
+chmod 600 "$INGEST_ENV"  # self-heal a file that predates this fix
 
 # ---------------------------------------------------------------- serving
 
@@ -122,11 +202,40 @@ if command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q "Status: active
 	ufw allow 443/tcp >/dev/null
 fi
 
+write_unit() { cat > "/etc/systemd/system/$1"; }
+
+# ------------------------------------------------------------------ the API
+
+# Generated rather than `install`ed straight from the committed
+# deploy/pennyrun-api.service so it tracks $DIR and $RUN_AS when either is
+# overridden -- the committed file hardcodes /opt/pennyrun and the
+# `pennyrun` user, which is only ever right at the defaults.
+say "installing the API service"
+write_unit pennyrun-api.service <<EOF
+[Unit]
+Description=Penny Run API
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+User=$RUN_AS
+WorkingDirectory=$DIR
+EnvironmentFile=$DB_ENV
+EnvironmentFile=$INGEST_ENV
+ExecStart=$DIR/.venv/bin/uvicorn api.main:app --host 127.0.0.1 --port 8000
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable --now pennyrun-api.service >/dev/null
+
 # ---------------------------------------------------------------- the sweep
 
 say "installing timers (discover ${HOUR}:00, scan ${HOUR}:10, harvest Sundays 04:10)"
-
-write_unit() { cat > "/etc/systemd/system/$1"; }
 
 # discover() and scan() used to run as one unit ("discover scan" in a
 # single ExecStart). discover() now die()s -- exits non-zero -- the moment
@@ -136,6 +245,22 @@ write_unit() { cat > "/etc/systemd/system/$1"; }
 # hosts and is unaffected by a blocked sitemap. Separate units mean a
 # blocked discover() only means the hot list didn't grow tonight -- it can
 # no longer take the whole night's data down with it.
+#
+# Separate units also means nothing stops them running at once, and that
+# is the one thing this architecture cannot allow: two sweep processes at
+# WORKERS=20 each, from one residential IP, hitting apionline.homedepot.com
+# simultaneously looks exactly like the burst that gets a datacentre range
+# refused (tools/README.md, "Where it can run"). discover fires at
+# ${HOUR}:00 with up to a 90-minute budget; scan fires ten minutes later
+# and could easily start while discover is still going. Both ExecStarts
+# below run under `flock $LOCK`, which serialises them against each other:
+# whichever starts second blocks (no -n) until the first releases the
+# lock, rather than either failing outright or the two running
+# concurrently. A plain `Conflicts=` was the other option here and was
+# rejected -- it stops whichever unit is already running the moment the
+# other one starts, throwing away a partially-completed discover or scan
+# instead of letting it finish. Each unit's own TimeoutStartSec still
+# bounds how long a wait (or a run) can take.
 write_unit pennyrun-discover.service <<EOF
 [Unit]
 Description=Penny Run nightly catalogue discovery
@@ -147,7 +272,7 @@ Type=oneshot
 User=$RUN_AS
 WorkingDirectory=$DIR
 Environment=PENNYRUN_DATA=$DATA
-ExecStart=$DIR/.venv/bin/python -m tools.sweep discover
+ExecStart=/usr/bin/flock $LOCK $DIR/.venv/bin/python -m tools.sweep discover
 TimeoutStartSec=5400
 Nice=10
 EOF
@@ -177,12 +302,23 @@ User=$RUN_AS
 WorkingDirectory=$DIR
 Environment=PENNYRUN_DATA=$DATA
 Environment=PENNYRUN_OUT=$DATA/clearance.json
+# A systemd unit does not inherit anyone's login environment -- setting
+# PENNYRUN_API/PENNYRUN_INGEST_TOKEN in a shell profile on this box does
+# nothing for this unit. Wired here instead: PENNYRUN_API defaults to the
+# host this box itself serves (its own API, through Caddy's reverse
+# proxy), and the token comes from $INGEST_ENV, the same file
+# pennyrun-api.service reads to require it. Prefixed with "-" because
+# scan() already treats a missing token as "don't upload, just write
+# clearance.json" (tested) -- a missing/unreadable token file must not
+# stop the scan itself from running.
+Environment=PENNYRUN_API=https://$HOST
+EnvironmentFile=-$INGEST_ENV
 # The scan refuses to overwrite the list on a bad run, so a failure here
 # leaves yesterday's data serving rather than emptying the app. It does
 # not depend on pennyrun-discover.service succeeding first -- a blocked
 # sitemap only means the hot list didn't grow tonight, not that the pool
 # can't be priced.
-ExecStart=$DIR/.venv/bin/python -m tools.sweep scan
+ExecStart=/usr/bin/flock $LOCK $DIR/.venv/bin/python -m tools.sweep scan
 TimeoutStartSec=5400
 Nice=10
 EOF

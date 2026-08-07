@@ -114,12 +114,20 @@ won't quote a price.
 ### Running it there
 
 There is no GitHub Actions runner to register anymore — collection runs
-directly on whatever box passed the check above, on its own cron or
-systemd timer (`deploy/setup.sh` installs `pennyrun-discover.timer` and
-`pennyrun-scan.timer` for exactly this). Set `PENNYRUN_API` and
-`PENNYRUN_INGEST_TOKEN` in that machine's environment and `scan()` uploads
-every run's hits to the droplet on its own; leave them unset and it just
-writes `clearance.json` locally, same as always.
+directly on whatever box passed the check above, on its own systemd
+timer (`deploy/setup.sh` installs `pennyrun-discover.timer` and
+`pennyrun-scan.timer` for exactly this). `scan()` uploads every run's
+hits to the droplet when `PENNYRUN_API` and `PENNYRUN_INGEST_TOKEN` are
+both set, and just writes `clearance.json` locally when they aren't —
+but a systemd unit does not inherit anyone's login shell, so setting
+those two in `~/.bashrc` or an interactive `export` does nothing for a
+timer-triggered run. `deploy/setup.sh` wires both into
+`pennyrun-scan.service` itself (`PENNYRUN_API` defaults to the host the
+box serves; the token comes from `/etc/pennyrun/ingest.env` via
+`EnvironmentFile=`) — if you're running the scan another way (a hand-rolled
+unit, plain cron), set them the same way: `Environment=`/`EnvironmentFile=`
+in the unit, or an explicit `env PENNYRUN_API=... PENNYRUN_INGEST_TOKEN=...`
+in the crontab line, not a shell profile.
 
 ## Which stores get swept
 

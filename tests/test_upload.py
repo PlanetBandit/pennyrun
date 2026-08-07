@@ -34,6 +34,31 @@ def test_batches_are_capped(monkeypatch):
     assert len(sent) == 3, "2500 rows should go in batches of 1000"
 
 
+def test_send_reports_partial_progress_on_a_mid_batch_failure(monkeypatch):
+    """Chunks before a failing one already committed -- permanently, since
+    observation is append-only. Losing that count in a bare exception
+    would leave a human re-running with no idea two of three chunks
+    already landed, and no way to avoid resending (and duplicating) them
+    other than by guesswork."""
+    calls = {"n": 0}
+
+    def flaky_post(url, body, token):
+        calls["n"] += 1
+        if calls["n"] == 3:
+            raise urllib.error.URLError("connection refused")
+        return {"accepted": len(body["observations"]), "rejected": 0}
+
+    monkeypatch.setattr(upload, "_post", flaky_post)
+    with pytest.raises(upload.UploadError) as exc_info:
+        upload.send([ROW] * 2500, "http://x", "t")  # 3 chunks: 1000, 1000, 500
+
+    err = exc_info.value
+    assert err.partial == {"accepted": 2000, "rejected": 0}, \
+        "the first two chunks' 2000 accepted rows must not be thrown away"
+    assert calls["n"] == 3
+    assert isinstance(err.cause, urllib.error.URLError)
+
+
 def test_post_retries_on_transport_failure_then_succeeds(monkeypatch):
     """A night's collection should not be lost because the droplet hiccuped
     -- a transport-level failure (timeout, connection refused, DNS) gets a

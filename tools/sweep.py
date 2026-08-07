@@ -501,6 +501,14 @@ def scan():
         from tools import upload
         try:
             got = upload.send(hits, base, token)
+        except upload.UploadError as e:
+            # Whatever chunks got through before the failure are already
+            # permanent (observation is append-only) -- say so, so a human
+            # re-running the scan knows those rows will be resent (and
+            # duplicated) rather than assuming nothing landed.
+            say("upload stopped partway: %d accepted, %d rejected before it failed (%s) "
+                "-- clearance.json was still written"
+                % (e.partial["accepted"], e.partial["rejected"], e.cause))
         except Exception as e:
             say("upload failed: %s -- clearance.json was still written" % e)
         else:
