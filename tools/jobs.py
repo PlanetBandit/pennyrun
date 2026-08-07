@@ -22,6 +22,7 @@ import socket
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections import deque
 
@@ -49,11 +50,38 @@ class Budget:
     to fire a burst that looks exactly like the one that got us blocked.
     """
 
-    def __init__(self, cap=BUDGET, window=WINDOW, clock=time.time):
+    def __init__(self, cap=BUDGET, window=WINDOW, clock=time.time, path=None):
         self.cap = cap
         self.window = window
         self._clock = clock
         self._spends = deque()          # (timestamp, count)
+        # Persisted, because an in-memory window is not a budget: `--once` from
+        # cron would start empty every five minutes, and the crashes that reset
+        # it are exactly the ones that follow heavy traffic.
+        self.path = path
+        self._load()
+
+    def _load(self):
+        if not self.path or not os.path.exists(self.path):
+            return
+        try:
+            with open(self.path) as f:
+                for ts, n in json.load(f):
+                    self._spends.append((float(ts), int(n)))
+        except Exception:
+            pass                        # a corrupt ledger must not stop the run
+        self._prune(self._clock())
+
+    def _save(self):
+        if not self.path:
+            return
+        try:
+            tmp = self.path + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump([[ts, n] for ts, n in self._spends], f)
+            os.replace(tmp, self.path)
+        except OSError:
+            pass
 
     def _prune(self, now):
         while self._spends and self._spends[0][0] <= now - self.window:
@@ -70,6 +98,7 @@ class Budget:
     def record(self, n):
         if n > 0:
             self._spends.append((self._clock(), n))
+            self._save()
 
     def wait_for(self, n):
         """Seconds until `n` more requests would fit under the cap. 0 if now.
@@ -82,8 +111,11 @@ class Budget:
         now = self._clock()
         self._prune(now)
         if n >= self.cap:
+            # the LAST spend, not the first: waiting only for the oldest would
+            # admit an oversized job on top of nearly a full window, which is
+            # the one thing this class exists to prevent
             return 0.0 if not self._spends else max(
-                0.0, self._spends[0][0] + self.window - now)
+                0.0, self._spends[-1][0] + self.window - now)
         running = sum(c for _, c in self._spends)
         if running + n <= self.cap:
             return 0.0
@@ -117,7 +149,10 @@ def _get(url, token, timeout=60):
 
 
 def claim(base, token, collector):
-    url = f"{base.rstrip('/')}/api/v1/checks/next?collector={collector}"
+    # quoted: a Mac hostname can contain a space or an apostrophe, which
+    # would otherwise produce a malformed request
+    url = (f"{base.rstrip('/')}/api/v1/checks/next"
+           f"?collector={urllib.parse.quote(collector, safe='')}")
     return _get(url, token)
 
 
@@ -140,56 +175,107 @@ def candidates():
 
 
 def run_one(job, budget, base, token):
-    """Price one store. Returns True if the loop should keep going."""
+    """Price one store. Returns True if the loop should keep going.
+
+    Every exit path reports the job. A job left `running` is a permanent
+    tombstone -- `check_job_live` is partial on ('queued','running'), so the
+    store can never be queued again and every future ask returns the same
+    stranded job forever.
+    """
     sid = job["store_id"]
-    hot_ids, meta = candidates()
-    if not hot_ids:
-        report(base, token, job["job_id"], 0, 0, failed=True,
-               note="hot list is empty -- run a nightly scan first")
-        say("hot list is empty; nothing to price. Reported as failed.")
-        return False
+    job_id = job["job_id"]
+    reported = False
 
-    need = sweep.chunks_for(len(hot_ids))
-    wait = budget.wait_for(need)
-    if wait > 0:
-        say("holding %.0fs before store %s -- %d/%d requests used in the last %dm"
-            % (wait, sid, budget.spent(), budget.cap, budget.window // 60))
-        time.sleep(wait)
+    def tell(hits, refused, failed=False, note=None):
+        nonlocal reported
+        try:
+            report(base, token, job_id, hits, refused, failed=failed, note=note)
+            reported = True
+        except Exception as e:                       # noqa: BLE001 -- see below
+            # If we cannot report, the job stays `running` and the reaper on
+            # the droplet side has to free it. Say so loudly rather than
+            # exiting quietly with the store locked.
+            say("COULD NOT REPORT job %s (%s) -- store %s stays locked until the "
+                "droplet's reaper frees it" % (job_id, e, sid))
 
-    before = sweep.previous_prices()
     try:
-        rows, refused_rate = sweep.price_at(sid, sid, hot_ids, meta, before)
-    except hdclient.Unreachable as e:
+        hot_ids, meta = candidates()
+        if not hot_ids:
+            tell(0, 0, failed=True, note="hot list is empty -- run a nightly scan first")
+            say("hot list is empty; nothing to price.")
+            return False
+
+        need = sweep.chunks_for(len(hot_ids))
+        wait = budget.wait_for(need)
+        if wait > 0:
+            say("holding %.0fs before store %s -- %d/%d requests used in the last %dm"
+                % (wait, sid, budget.spent(), budget.cap, budget.window // 60))
+            time.sleep(wait)
+            # sleep can return marginally early; do not proceed on a stale check
+            while budget.wait_for(need) > 0:
+                time.sleep(1)
+
+        # Recorded BEFORE the call, not after. An exception mid-store still
+        # spent those requests against the address, and a budget that only
+        # counts successful stores is not a budget.
         budget.record(need)
-        report(base, token, job["job_id"], 0, 0, failed=True, note="unreachable: %s" % e)
-        say("store %s unreachable (%s) -- our network, not a refusal. Continuing." % (sid, e))
+
+        before = sweep.previous_prices()
+        rows, refused_rate, unreachable_rate = sweep.price_at(
+            sid, sid, hot_ids, meta, before)
+
+        # "They refused us" and "we had no network" need different answers, and
+        # collapsing them is what let an all-unreachable job report `done` and
+        # mark a store fresh for six hours that was never contacted.
+        if unreachable_rate >= sweep.SCAN_ABORT_THRESHOLD:
+            tell(len(rows), 0, failed=True,
+                 note="unreachable on %.0f%% of chunks" % (100 * unreachable_rate))
+            say("store %s: %.0f%% of chunks unreachable -- that is our network, not "
+                "a refusal. Not marking the store checked." % (sid, 100 * unreachable_rate))
+            return True
+
+        if refused_rate >= sweep.SCAN_ABORT_THRESHOLD:
+            tell(len(rows), int(refused_rate * need), failed=True,
+                 note="refused %.0f%% of chunks" % (100 * refused_rate))
+            say("store %s refused %.0f%% of its chunks -- stopping the loop rather "
+                "than walking into the wall one job at a time."
+                % (sid, 100 * refused_rate))
+            return False
+
+        # A store is only "checked" once its prices are actually in the
+        # database. Reporting `done` on a failed upload marks it fresh for
+        # FRESH_FOR with nothing behind the claim -- the user is told their
+        # prices are current and served the old ones.
+        if rows:
+            try:
+                got = upload.send(rows, base, token)
+                say("store %s: %d hits, uploaded %d" % (sid, len(rows), got["accepted"]))
+            except upload.UploadError as e:
+                tell(e.partial.get("accepted", 0), 0, failed=True,
+                     note="priced but upload stopped: %s" % e.cause)
+                say("store %s priced but only %d rows landed -- NOT marking it "
+                    "checked, because the data is not there."
+                    % (sid, e.partial.get("accepted", 0)))
+                return True
+
+        tell(len(rows), int(refused_rate * need))
         return True
 
-    budget.record(need)
-
-    if refused_rate >= sweep.SCAN_ABORT_THRESHOLD:
-        report(base, token, job["job_id"], len(rows), int(refused_rate * need),
-               failed=True, note="refused %.0f%% of chunks" % (100 * refused_rate))
-        say("store %s refused %.0f%% of its chunks -- stopping the loop rather than "
-            "walking into the wall one job at a time." % (sid, 100 * refused_rate))
+    except Exception as e:                           # noqa: BLE001
+        # Anything unexpected: still report, so the store is not stranded.
+        if not reported:
+            tell(0, 0, failed=True, note="collector error: %s: %s" % (type(e).__name__, e))
+        say("store %s failed unexpectedly (%s: %s)" % (sid, type(e).__name__, e))
         return False
 
-    if rows and os.environ.get("PENNYRUN_API") and os.environ.get("PENNYRUN_INGEST_TOKEN"):
-        try:
-            got = upload.send(rows, base, token)
-            say("store %s: %d hits, uploaded %d" % (sid, len(rows), got["accepted"]))
-        except upload.UploadError as e:
-            # Collection succeeded; delivery did not. Report the job done
-            # anyway -- the store WAS priced, and marking it failed would make
-            # the next asker pay for a sweep that already happened.
-            say("store %s priced but upload stopped partway (%s)" % (sid, e.cause))
 
-    report(base, token, job["job_id"], len(rows), int(refused_rate * need))
-    return True
+def budget_path():
+    """Beside the other sweep state, so PENNYRUN_DATA moves it too."""
+    return os.path.join(sweep.DATA, "request_budget.json")
 
 
 def loop(base, token, once=False, budget=None):
-    budget = budget or Budget()
+    budget = budget or Budget(path=budget_path())
     collector = socket.gethostname()
     say("working the queue at %s as %s (cap %d req / %dm)"
         % (base, collector, budget.cap, budget.window // 60))

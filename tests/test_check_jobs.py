@@ -183,10 +183,15 @@ def test_a_running_job_is_not_re_queued_by_a_later_ask(api):
 
 
 def test_polling_updates_the_heartbeat_even_with_an_empty_queue(api):
-    """Silence has to be distinguishable from 'nothing to do'."""
-    assert ask(api, [S1]).json()["collector_online"] is False
-    api.get("/api/v1/checks/next", headers=AUTH)
-    assert ask(api, [S3]).json()["collector_online"] is True
+    """Silence has to be distinguishable from 'nothing to do'.
+
+    The claim below happens with NOTHING queued -- an earlier version of this
+    test queued a job first, so the claim took it and the empty-queue path
+    (the entire reason collector_heartbeat exists) was never exercised.
+    """
+    empty = api.get("/api/v1/checks/next", headers=AUTH).json()
+    assert empty["job"] is None, "the queue was not actually empty"
+    assert ask(api, [S1]).json()["collector_online"] is True
 
 
 # ---------------------------------------------------------------- finishing

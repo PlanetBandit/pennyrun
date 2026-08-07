@@ -47,6 +47,32 @@ HEARTBEAT_STALE_MIN = int(os.environ.get("PENNYRUN_HEARTBEAT_STALE_MIN", "10"))
 
 MAX_STORES_PER_ASK = 10
 
+# A job claimed but never reported is a permanent tombstone: check_job_live is
+# partial on ('queued','running'), so that store can never be queued again and
+# every future ask returns the same stranded job forever. The collector can
+# crash, lose its network mid-report, or simply have its lid closed -- the spec
+# calls a sleeping home box the expected steady state -- so this is a routine
+# event, not an exotic one. Generous enough that a slow job is never stolen
+# from a working collector.
+STUCK_AFTER_MIN = int(os.environ.get("PENNYRUN_STUCK_AFTER_MIN", "30"))
+
+# The whole country is 2,021 stores. Unauthenticated, uncapped, ~203 POSTs
+# would queue every one of them: 2,021 x 81 = ~164,000 requests, about 137
+# hours of the collector's entire budget, with real users behind it forever.
+# Coalescing does not help -- each store is a distinct job.
+MAX_QUEUE_DEPTH = int(os.environ.get("PENNYRUN_MAX_QUEUE_DEPTH", "60"))
+
+
+def _reap(cur):
+    """Free jobs whose collector never came back. Returns how many."""
+    cur.execute(
+        "update check_job set state = 'queued', claimed_at = null, claimed_by = null,"
+        "  note = coalesce(note,'') || ' [reaped: collector never reported]'"
+        " where state = 'running'"
+        "   and claimed_at < now() - make_interval(mins => %s)"
+        " returning job_id", (STUCK_AFTER_MIN,))
+    return len(cur.fetchall())
+
 
 def _freshness(cur, store_ids):
     """{store_id: newest data timestamp or None} across both sources."""
@@ -56,7 +82,8 @@ def _freshness(cur, store_ids):
         "         (select max(j.finished_at) from check_job j"
         "           where j.store_id = s.store_id and j.state = 'done'),"
         "         (select max(o.observed_at) from observation o"
-        "           where o.store_id = s.store_id)"
+        "           where o.store_id = s.store_id"
+        "             and o.clearance_price is not null)"
         "       ) as fresh_at"
         "  from unnest(%s::text[]) as s(store_id)",
         (list(store_ids),))
@@ -74,9 +101,14 @@ def ask(payload: dict):
     store_ids = payload.get("store_ids")
     if not isinstance(store_ids, list) or not store_ids:
         raise HTTPException(400, "store_ids must be a non-empty list")
+    # Sorted, not just deduplicated: the whole ask is one transaction, and
+    # two clients sending overlapping stores in opposite order take the
+    # check_job_live locks in opposite order and deadlock. A store picker sorts
+    # by distance from each user, so overlapping-but-differently-ordered asks
+    # are the normal case, not an exotic one. A global lock order removes it.
+    store_ids = sorted(dict.fromkeys(str(s) for s in store_ids))
     if len(store_ids) > MAX_STORES_PER_ASK:
         raise HTTPException(400, f"at most {MAX_STORES_PER_ASK} stores per ask")
-    store_ids = list(dict.fromkeys(str(s) for s in store_ids))
 
     device_id = payload.get("device_id")
     if device_id is not None:
@@ -86,6 +118,13 @@ def ask(payload: dict):
             raise HTTPException(400, "device_id must be a uuid")
 
     with rows() as cur:
+        _reap(cur)
+        cur.execute("select count(*) as n from check_job where state = 'queued'")
+        depth = cur.fetchone()["n"]
+        if depth >= MAX_QUEUE_DEPTH:
+            raise HTTPException(
+                503, f"the queue is full ({depth} stores waiting); try again later")
+
         cur.execute("select store_id from store where store_id = any(%s)", (store_ids,))
         known = {r["store_id"] for r in cur.fetchall()}
         unknown = [s for s in store_ids if s not in known]
@@ -114,7 +153,8 @@ def ask(payload: dict):
             # store -- that IS the coalescing, and it is atomic.
             cur.execute(
                 "insert into check_job (store_id) values (%s) "
-                "on conflict do nothing returning job_id", (sid,))
+                " on conflict (store_id) where state in ('queued','running')"
+                " do nothing returning job_id", (sid,))
             got = cur.fetchone()
             if got:
                 job_id = got["job_id"]
@@ -122,12 +162,27 @@ def ask(payload: dict):
                 cur.execute("select job_id from check_job where store_id = %s "
                             "and state in ('queued','running')", (sid,))
                 existing = cur.fetchone()
-                if not existing:
-                    # the live job finished between our insert and this read;
-                    # the store is fresh now, so say so rather than looping
-                    ready.append({"store_id": sid, "as_of": None})
-                    continue
-                job_id = existing["job_id"]
+                if existing:
+                    job_id = existing["job_id"]
+                else:
+                    # The live job left ('queued','running') between our insert
+                    # and this read. It may have finished -- or it may have
+                    # FAILED, in which case calling the store fresh would tell
+                    # the user their prices are current when the check just
+                    # failed. Retry the insert instead of guessing; no live job
+                    # exists now, so it succeeds.
+                    cur.execute(
+                        "insert into check_job (store_id) values (%s)"
+                        " on conflict (store_id) where state in ('queued','running')"
+                        " do nothing returning job_id", (sid,))
+                    retry = cur.fetchone()
+                    if not retry:
+                        cur.execute("select job_id from check_job where store_id = %s"
+                                    " and state in ('queued','running')", (sid,))
+                        retry = cur.fetchone()
+                    if not retry:
+                        raise HTTPException(503, "could not queue %s, try again" % sid)
+                    job_id = retry["job_id"]
 
             if device_id:
                 cur.execute("insert into check_watcher (job_id, device_id) values (%s,%s) "
@@ -142,7 +197,8 @@ def ask(payload: dict):
                 "  from check_job where state = 'queued'")
             pos = {r["job_id"]: r["pos"] for r in cur.fetchall()}
             for q in queued:
-                q["position"] = pos.get(q["job_id"])
+                # 0, not None: a job already running has nobody ahead of it
+                q["position"] = pos.get(q["job_id"], 0)
 
         seen = _collector_seen(cur)
 
@@ -169,6 +225,7 @@ def claim(authorization: str = Header(None), collector: str = "unknown"):
     """
     authorise(authorization)
     with rows() as cur:
+        freed = _reap(cur)
         cur.execute(
             "update check_job set state = 'running', claimed_at = now(), claimed_by = %s"
             " where job_id = (select job_id from check_job where state = 'queued'"
@@ -193,14 +250,27 @@ def finish(job_id: int, payload: dict, authorization: str = Header(None)):
     authorise(authorization)
     failed = bool(payload.get("failed"))
     state = "failed" if failed else "done"
+
+    def _count(key):
+        v = payload.get(key)
+        if v is None:
+            return None
+        try:
+            n = int(v)
+        except (TypeError, ValueError):
+            raise HTTPException(400, f"{key} must be a whole number")
+        if n < 0:
+            raise HTTPException(400, f"{key} cannot be negative")
+        return n
+
+    hits, refused = _count("hits"), _count("refused")
     with rows() as cur:
         cur.execute(
             "update check_job set state = %s, finished_at = now(),"
             "  hits = %s, refused = %s, note = %s"
             " where job_id = %s and state = 'running'"
             " returning job_id, store_id, state",
-            (state, payload.get("hits"), payload.get("refused"),
-             (payload.get("note") or None), job_id))
+            (state, hits, refused, (payload.get("note") or None), job_id))
         got = cur.fetchone()
         if not got:
             raise HTTPException(404, "no running job with that id")
@@ -220,7 +290,7 @@ def status(job_id: int):
     with rows() as cur:
         cur.execute(
             "select job_id, store_id, state, requested_at, claimed_at, finished_at,"
-            "       hits, refused, note from check_job where job_id = %s", (job_id,))
+            "       hits, refused from check_job where job_id = %s", (job_id,))
         job = cur.fetchone()
         if not job:
             raise HTTPException(404, "unknown job")

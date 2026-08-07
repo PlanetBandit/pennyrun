@@ -481,6 +481,7 @@ def price_at(sid, name, ids, meta, before, note=""):
     # types for exactly this reason; collapsing them here would throw that
     # away at the one place it decides something.
     refused_rate = run.refused / run.chunks if run.chunks else 0.0
+    unreachable_rate = run.unreachable / run.chunks if run.chunks else 0.0
     if run.refused or run.unreachable:
         say("  %-16s %5d hits in %5.1fs  (%d/%d chunks refused, %d unreachable)%s"
             % (name, len(run.out), time.time() - s0, run.refused, run.chunks,
@@ -488,7 +489,7 @@ def price_at(sid, name, ids, meta, before, note=""):
     else:
         say("  %-16s %5d hits in %5.1fs%s"
             % (name, len(run.out), time.time() - s0, note))
-    return run.out, refused_rate
+    return run.out, refused_rate, unreachable_rate
 
 
 def scan():
@@ -547,7 +548,7 @@ def scan():
     # list, so it runs first -- if the address gets cut off mid-run, the
     # speculative half is what gets lost, not the useful half.
     for i, (sid, name) in enumerate(stores):
-        got, rate = price_at(sid, name, hot_ids, meta, before)
+        got, rate, _unreach = price_at(sid, name, hot_ids, meta, before)
         hits += got
         if rate >= SCAN_ABORT_THRESHOLD:
             skipped = chunks_for(len(hot_ids)) * (len(stores) - i - 1) \
@@ -564,7 +565,7 @@ def scan():
     advance = False
     if cold_ids and not blocked:
         sid, name = stores[turn]
-        got, rate = price_at(sid, name, cold_ids, meta, before, "  [cold pool]")
+        got, rate, _unreach = price_at(sid, name, cold_ids, meta, before, "  [cold pool]")
         hits += got
         if rate >= SCAN_ABORT_THRESHOLD:
             say("scan: the cold sweep at %s was refused; leaving the rotation "

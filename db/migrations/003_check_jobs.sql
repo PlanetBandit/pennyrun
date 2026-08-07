@@ -36,7 +36,7 @@ create index if not exists check_job_queue on check_job (state, requested_at);
 -- Who to tell when a job finishes. A device may watch many jobs and a job may
 -- have many watchers -- that is the point of coalescing.
 create table if not exists check_watcher (
-  job_id    bigint not null references check_job,
+  job_id    bigint not null references check_job on delete cascade,
   device_id uuid not null references device,
   added_at  timestamptz not null default now(),
   primary key (job_id, device_id)
@@ -52,5 +52,5 @@ create index if not exists check_watcher_device on check_watcher (device_id);
 create table if not exists collector_heartbeat (
   collector   text primary key,
   last_seen   timestamptz not null default now(),
-  last_job_id bigint references check_job
+  last_job_id bigint references check_job on delete set null
 );
