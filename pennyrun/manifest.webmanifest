@@ -4,11 +4,6 @@
   "description": "Aisle checklist and UPC matcher for penny hunting.",
   "start_url": "./",
   "scope": "./",
-  "share_target": {
-    "action": "./",
-    "method": "GET",
-    "params": { "title": "title", "text": "text", "url": "url" }
-  },
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#E4E2DC",

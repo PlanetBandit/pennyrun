@@ -1,0 +1,7 @@
+pytest
+curl_cffi
+psycopg[binary]
+fastapi
+uvicorn[standard]
+httpx
+certifi

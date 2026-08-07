@@ -354,7 +354,6 @@ input,select,textarea{font-family:inherit;font-size:16px}
   padding:6px 8px;border-radius:6px;word-break:break-all;flex:1;min-width:0;
 }
 .guide__p{font-size:12px;color:var(--mute);margin:7px 0 10px;line-height:1.45}
-.copyrow{display:flex;gap:6px;align-items:stretch;margin:6px 0 2px}
 .ladder{display:flex;gap:4px;margin:2px 0 5px}
 .ladder__r{
   flex:1;text-align:center;font-family:var(--mono);font-size:10px;
@@ -475,38 +474,6 @@ input,select,textarea{font-family:inherit;font-size:16px}
     </div>
   </div>
 
-  <p class="pane__title" style="margin-top:18px">Or start from the HD app</p>
-  <div class="linkbox">
-    <input class="field__i" id="linkin" placeholder="Paste a Home Depot share link">
-    <button class="btn btn--tag" id="linkgo">Read</button>
-  </div>
-  <button class="btn btn--ghost btn--wide" id="shotbtn" style="margin-top:8px">📸 Read HD app screenshots (pick several)</button>
-  <p class="scan__hint">Paste a share link (tap Read with the box empty to grab it from your clipboard) — or screenshot the product page and the reader pulls the clearance price, online price, and save % out of it.</p>
-
-  <details class="guide">
-    <summary>⚙️ One-time setup: auto-read a shared link (iPhone Shortcut)</summary>
-    <p class="guide__p">This Shortcut fetches the product page's code on your phone, pulls out the name, prices, clearance marker, and stock status, and hands them to Penny Run automatically. Build it once in the Shortcuts app:</p>
-    <ol>
-      <li>Open <b>Shortcuts</b> → tap <b>+</b> → rename it <b>Send to Penny Run</b>.</li>
-      <li>In the shortcut's settings (ⓘ), turn on <b>Show in Share Sheet</b> and allow <b>URLs</b> and <b>Text</b> input.</li>
-      <li>Add action <b>Get URLs from Input</b> (bind it to <b>Shortcut Input</b>).</li>
-      <li>Add action <b>URL Encode</b> (acting on the URLs) — this keeps the link intact in the hand-off.</li>
-      <li>Add action <b>Get Contents of URL</b> (acting on the URLs).</li>
-      <li>Add action <b>Get Text from Input</b> (from the Contents).</li>
-      <li>Add action <b>Match Text</b> (on that Text) and paste this pattern (it also harvests product links, so sharing a <i>category</i> page fills the Sweep list):
-        <div class="copyrow"><code id="rx-pat">(/p/[A-Za-z0-9][\w%-]{6,90}/\d{6,})|(&lt;title&gt;[^&lt;]{5,160})|("price"\s*:\s*"?\d+(\.\d+)?)|("clearance"\s*:\s*\{)|(OUT_OF_STOCK|LIMITED_STOCK|BACKORDERED)|(\$\s*\d+\.\d{2})|([Cc]learance\s+[Ii]tem)|([Ww]as\s+\$\d+\.\d{2})|(\(\d{1,3}%\))</code>
-        <button class="btn btn--sm btn--ghost" data-copy="rx-pat">Copy</button></div></li>
-      <li>Add action <b>Combine Text</b> (combine Matches, separator: New Lines).</li>
-      <li>Add action <b>URL Encode</b> (on the Combined Text).</li>
-      <li>Add action <b>Text</b> and build this — insert variable chips where the [brackets] are; after <code style="display:inline;padding:1px 4px">text=</code> use the encode of the <i>Combined Text</i> (step 9), after <code style="display:inline;padding:1px 4px">url=</code> the encode of the <i>URLs</i> (step 4):
-        <div class="copyrow"><code id="rx-url">https://planetbandit.github.io/pennyrun/?text=[URL&nbsp;Encoded&nbsp;Text]&amp;url=[URL&nbsp;Encoded&nbsp;Text&nbsp;from&nbsp;step&nbsp;4]</code>
-        <button class="btn btn--sm btn--ghost" data-copy="rx-url">Copy</button></div></li>
-      <li>Add action <b>Open URLs</b> (on that Text). Done — in the HD app tap Share → <b>Send to Penny Run</b>.</li>
-    </ol>
-    <p class="guide__p">Why not a full-page capture? Home Depot's page draws itself with JavaScript after loading, so PDF/screenshot renders only catch the empty shell — the page's raw code is where the data actually lives.</p>
-    <p class="guide__p"><b>What it can and can't see:</b> the fetch is anonymous, so it brings back the product name, internet #, online price, and general stock status — but not your store's in-store clearance price. Home Depot ignores a hand-set store cookie (tested: it returns a random store), so that number still comes from <b>📸 From a screenshot</b> of the HD app.</p>
-    <p class="guide__p">Once this shortcut exists, <b>Sweep</b> (Checked tab) can call it directly: tap a category and it fetches that clearance page and fills the candidate list without you leaving Penny Run.</p>
-  </details>
 </section>
 
 
@@ -609,7 +576,6 @@ input,select,textarea{font-family:inherit;font-size:16px}
     <p class="field__l" style="margin:14px 0 7px">Tag &amp; shelf clues — tap what you see</p>
     <div style="display:flex;gap:6px;flex-wrap:wrap;margin:0 0 9px">
       <button class="btn btn--ghost btn--sm" id="sheetSnap">📷 Read the tag for me</button>
-      <button class="btn btn--ghost btn--sm" id="sheetShot">📸 From a screenshot</button>
     </div>
     <div id="cluelist"></div>
 
@@ -650,8 +616,6 @@ input,select,textarea{font-family:inherit;font-size:16px}
     </div>
   </div>
 </div>
-
-<input type="file" id="shotfile" accept="image/*" multiple hidden>
 
 <nav class="tabs">
   <button class="tab is-on" data-pane="scan"><span class="tab__g">▚</span>Scan</button>
@@ -730,7 +694,7 @@ var CLUES = [
 
 var ENDING_SCORE = { "":0, "06":1, "03":1, "02":2, "01":0, "penny":4 };
 
-var state = { items: [], steps: [], myStore: null, shortcutName: "",
+var state = { items: [], steps: [], myStore: null,
               foundStores: [], pickedStores: [], storeHits: null,
               mode: "assess", verifyId: null };
 
@@ -742,7 +706,6 @@ function load(){
       state.items = Array.isArray(p.items) ? p.items : [];
       state.steps = Array.isArray(p.steps) ? p.steps : [];
       state.myStore = (p.myStore && p.myStore.num) ? p.myStore : null;
-      state.shortcutName = p.shortcutName || "";
       state.foundStores = Array.isArray(p.foundStores) ? p.foundStores : [];
       state.pickedStores = Array.isArray(p.pickedStores) ? p.pickedStores : [];
       state.storeHits = p.storeHits || null;
@@ -755,7 +718,7 @@ function load(){
 }
 function save(){
   try{ localStorage.setItem(KEY, JSON.stringify({items:state.items, steps:state.steps,
-       myStore:state.myStore, shortcutName:state.shortcutName,
+       myStore:state.myStore,
        foundStores:state.foundStores, pickedStores:state.pickedStores, storeHits:state.storeHits})); }
   catch(e){ /* private mode — app still works for this session */ }
 }
@@ -1284,17 +1247,6 @@ function flashStage(v){
 function armMerge(id){
   try{ localStorage.setItem("pennyrun.merge", JSON.stringify({ id: id, at: Date.now() })); }catch(e){}
 }
-function consumeMergeTarget(){
-  var id = null;
-  try{
-    var m = JSON.parse(localStorage.getItem("pennyrun.merge") || "null");
-    if(m && m.id && (Date.now() - m.at) < 900000) id = m.id;
-    localStorage.removeItem("pennyrun.merge");
-  }catch(e){}
-  if(!id) return null;
-  return state.items.filter(function(t){ return t.id === id; })[0] || null;
-}
-
 function announceVerdict(item, read){
   var v = verdictOf(item);
   beep(v.flag === "red" ? "bad" : "good");
@@ -1386,36 +1338,6 @@ function openHD(upc){
   window.open("https://www.homedepot.com/s/" + encodeURIComponent(u), "_blank", "noopener");
 }
 
-/* ============================================================
-   LINK SCANNER — pull what a Home Depot share actually carries:
-   product name and internet # from the URL, and a price when the
-   share text includes one. The link is only an address, so store
-   availability still comes from the clue checklist.
-   ============================================================ */
-function parseHDShare(raw){
-  var t = String(raw || "");
-  var out = { name:"", internet:"", url:"", price:null, was:null };
-  var m = t.match(/https?:\/\/[^\s"']*homedepot\.com[^\s"']*/i);
-  if(m) out.url = m[0].replace(/[)\],.;!?]+$/, "");
-  if(out.url){
-    m = out.url.match(/\/(\d{8,10})(?:[\/?#]|$)/);
-    if(m) out.internet = m[1];
-    m = out.url.match(/\/p\/([A-Za-z0-9][A-Za-z0-9-]*)\//);
-    if(m && !/^\d+$/.test(m[1])){
-      out.name = m[1].replace(/-/g, " ").replace(/\s+/g, " ").trim();
-    }
-  }
-  m = t.match(/was[^0-9$]{0,6}\$?\s*(\d{1,5}[.,]\d{2})/i);
-  if(m) out.was = parseFloat(m[1].replace(",", "."));
-  var re = /\$\s*(\d{1,5}[.,]\d{2})\b/g, mm;
-  while((mm = re.exec(t))){
-    var p = parseFloat(mm[1].replace(",", "."));
-    if(out.was !== null && p === out.was) continue;
-    if(out.price === null || p < out.price) out.price = p;
-  }
-  return out;
-}
-
 function endingFor(price){
   if(price == null) return "";
   if(Math.abs(price - 0.01) < 1e-9) return "penny";
@@ -1425,195 +1347,6 @@ function endingFor(price){
   if(cents === 2) return "02";
   if(cents === 1) return "01";
   return "";
-}
-
-/* ============================================================
-   SCREENSHOT READER — OCR an HD app screenshot. The product page
-   shows the in-store clearance price, online price, and save %,
-   which is exactly what a bare share link can't carry.
-   ============================================================ */
-function parseAppShot(raw){
-  var t = String(raw || "");
-  var out = { clearance:false, gone:false, online:null, savePct:null, saveAmt:null, store:null,
-              name: "", model: guessModel(t) };
-  /* a matched <title> tag is the cleanest name source a page fetch has */
-  var tm = t.match(/<title>\s*([^<]{5,160})/i);
-  if(tm) out.name = tm[1].replace(/\s*[-|–]\s*The Home Depot.*$/i, "").trim();
-  if(!out.name) out.name = guessName(t);
-  if(/in[\s-]*store\s+clearance/i.test(t) || /clearance\s+(item|price)/i.test(t)) out.clearance = true;
-  /* fields the iPhone shortcut lifts out of the fetched page */
-  if(/"clearance"\s*:\s*\{/.test(t)) out.clearance = true;
-  if(/OUT_OF_STOCK|BACKORDERED|LIMITED_STOCK|\bunavailable\b|limited\s+stock/i.test(t)) out.gone = true;
-  var am = t.match(/aisle\s*#?\s*([A-Z0-9]{1,4})\W{0,4}bay\s*#?\s*([A-Z0-9]{1,4})/i);
-  out.aisle = am ? "Aisle " + am[1].toUpperCase() + " · Bay " + am[2].toUpperCase() : "";
-  t = t.replace(/"price"\s*:\s*"?(\d{1,5}(?:\.\d{1,2})?)/g, function(_, n){
-    return "$" + (n.indexOf(".") === -1 ? n + ".00" : n);
-  });
-  var m = t.match(/online\s*price[^$0-9]{0,10}\$?\s*(\d{1,5}[.,]\d{2})/i);
-  if(m) out.online = parseFloat(m[1].replace(",", "."));
-  m = t.match(/save[^$0-9]{0,10}\$?\s*(\d{1,5}[.,]\d{2})[^(]{0,12}\(\s*(\d{1,3})\s*%\s*\)/i);
-  if(m){ out.saveAmt = parseFloat(m[1].replace(",", ".")); out.savePct = parseInt(m[2], 10); }
-  else { m = t.match(/\(\s*(\d{1,3})\s*%\s*\)/); if(m) out.savePct = parseInt(m[1], 10); }
-  var prices = [];
-  var re = /\$\s*(\d{1,5}(?:[.,]\d{2})?)(?:\s+(\d{2})\b)?/g, mm;
-  while((mm = re.exec(t))){
-    var v = null;
-    if(/[.,]/.test(mm[1])) v = parseFloat(mm[1].replace(",", "."));
-    else if(mm[2]) v = parseFloat(mm[1] + "." + mm[2]); /* "$4 50" superscript cents */
-    if(v != null && v > 0) prices.push(v);
-  }
-  m = t.match(/was[^0-9$]{0,6}\$?\s*(\d{1,5}[.,]\d{2})/i);
-  var wasP = m ? parseFloat(m[1].replace(",", ".")) : null;
-  var base = out.online != null ? out.online : wasP;
-  /* drop the reference price and anything that is really the
-     savings amount, not a price ($88.28 on a "was $441.36 (20%)" tag) */
-  var cands = prices.filter(function(p){
-    if(p === out.online || p === out.saveAmt || (wasP != null && p === wasP)) return false;
-    if(base != null && out.savePct != null && Math.abs(p - base * out.savePct / 100) <= 0.02) return false;
-    if(base != null && out.saveAmt != null && Math.abs(p - out.saveAmt) <= 0.02) return false;
-    return true;
-  });
-  if(cands.length){
-    out.store = Math.min.apply(null, cands);
-    if(out.online == null) out.online = (cands.length > 1) ? Math.max.apply(null, cands) : wasP;
-    if(out.online === out.store) out.online = wasP != null ? wasP : out.online;
-  } else if(out.online != null && out.saveAmt != null){
-    out.store = Math.round((out.online - out.saveAmt) * 100) / 100;
-  } else if(out.online != null && out.savePct != null){
-    out.store = Math.round(out.online * (100 - out.savePct)) / 100;
-  }
-  if(out.online == null && wasP != null) out.online = wasP;
-  if(out.savePct == null && out.online != null && out.store != null && out.online > 0){
-    out.savePct = Math.round((1 - out.store / out.online) * 100);
-  }
-  return out;
-}
-
-function applyAppShot(p){
-  var clues = {}, ending = "", bits = [];
-  if(p.clearance){ clues.appclear = true; bits.push("Clearance"); }
-  if(p.gone){ clues.appgone = true; bits.push("Unavailable/limited"); }
-  if(p.store != null){ bits.push("$" + p.store.toFixed(2)); ending = endingFor(p.store); }
-  if(p.online != null && p.online !== p.store) bits.push("from $" + p.online.toFixed(2));
-  if(p.savePct != null && p.savePct > 0){ bits.push(p.savePct + "% off"); if(p.savePct >= 70) clues.deep = true; }
-  if(p.aisle) bits.push(p.aisle);
-  var summary = bits.length
-    ? "📸 App read: " + bits.join(" · ") + " — double-check, then add the shelf clues."
-    : "📸 Couldn't find prices in that screenshot — fill it in by hand.";
-  return { clues: clues, ending: ending, summary: summary, bits: bits,
-           name: p.name || "", model: p.model || "", sku: "", aisle: p.aisle || "",
-           now: p.store, was: p.online, date: "" };
-}
-
-/* Batch import: the HD app is the only place a store's in-store
-   clearance panel exists, so reading a stack of screenshots is the
-   fastest legitimate way to log a whole browsing session. Each one
-   becomes its own scored item. */
-function readShotBatch(files){
-  var list = Array.prototype.slice.call(files);
-  var done = 0, made = [];
-  go("scan");
-  function step(){
-    if(!list.length){
-      var greens = made.filter(function(i){ return verdictOf(i).flag === "green"; }).length;
-      var yellows = made.filter(function(i){ return verdictOf(i).flag === "yellow"; }).length;
-      showRead(greens ? "go" : yellows ? "hold" : "stop", "📸",
-        "Read " + made.length + " screenshot" + (made.length === 1 ? "" : "s"),
-        greens + " green · " + yellows + " yellow · " + (made.length - greens - yellows) + " red", "",
-        "All of them are saved on the Checked tab — filter by flag, and reassess any that misread.",
-        [{ t:"Open Checked", c:"btn--tag", fn:function(){ go("checked"); } }]);
-      return;
-    }
-    var f = list.shift();
-    done++;
-    showRead("hold", "📸", "Reading screenshot " + done + " of " + (done + list.length),
-      "", "", "Pulling prices and clearance status out of each one…", []);
-    readOneShot(f, function(read){
-      var item = { id: "i-" + Date.now().toString(36) + "-" + done, at: Date.now(),
-                   name: (read && read.name) || "", upc: "", notes: "",
-                   clues: (read && read.clues) || {}, ending: (read && read.ending) || "", register: "" };
-      if(read){
-        if(read.now != null) item.now = read.now;
-        if(read.was != null) item.was = read.was;
-        if(read.aisle) item.notes = read.aisle;
-      }
-      state.items.unshift(item);
-      made.push(item);
-      save(); renderItems();
-      step();
-    });
-  }
-  step();
-}
-
-function readOneShot(file, cb){
-  var url = URL.createObjectURL(file);
-  var img = new Image();
-  img.onload = function(){
-    var scale = Math.min(1, 1600 / img.naturalWidth);
-    var c = document.createElement("canvas");
-    c.width = Math.round(img.naturalWidth * scale);
-    c.height = Math.round(img.naturalHeight * scale);
-    c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
-    URL.revokeObjectURL(url);
-    initOCR().then(function(w){ return w.recognize(c); }).then(function(res){
-      cb(applyAppShot(parseAppShot(res && res.data ? res.data.text : "")));
-    }).catch(function(){ cb(null); });
-  };
-  img.onerror = function(){ URL.revokeObjectURL(url); cb(null); };
-  img.src = url;
-}
-
-function readShotFile(file){
-  var url = URL.createObjectURL(file);
-  var img = new Image();
-  img.onload = function(){
-    var scale = Math.min(1, 1600 / img.naturalWidth);
-    var c = document.createElement("canvas");
-    c.width = Math.round(img.naturalWidth * scale);
-    c.height = Math.round(img.naturalHeight * scale);
-    c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
-    URL.revokeObjectURL(url);
-    initOCR().then(function(w){ return w.recognize(c); }).then(function(res){
-      resumeSheet(applyAppShot(parseAppShot(res && res.data ? res.data.text : "")));
-    }).catch(function(){
-      resumeSheet({ clues:{}, ending:"", summary:"📸 The reader hiccuped on that image — fill it in by hand." });
-    });
-  };
-  img.onerror = function(){ URL.revokeObjectURL(url); resumeSheet(null); };
-  img.src = url;
-}
-
-/* ============================================================
-   SWEEP — a store-localized search/category page lists ~28
-   products; harvest every one into a candidate queue, flagging
-   inline clearance and online-unavailable signals. One share
-   becomes a whole aisle's worth of leads.
-   ============================================================ */
-/* Matches arrive in document order, so a signal belongs to the
-   product link most recently seen before it. Anything appearing
-   before the first link belongs to no product and is discarded —
-   that keeps page-level noise from falsely badging an item. */
-function parseSweep(text){
-  var t = String(text || "");
-  var tok = /\/p\/([A-Za-z0-9][A-Za-z0-9%-]{6,90})\/(\d{6,})|("clearance"\s*:\s*\{)|(OUT_OF_STOCK|BACKORDERED|LIMITED_STOCK)|("fulfillable"\s*:\s*false)|([Cc]learance\s+[Ii]tem)/g;
-  var byId = {}, out = [], cur = null, m;
-  while((m = tok.exec(t))){
-    if(m[1]){
-      var id = m[2];
-      if(byId[id]){ cur = byId[id]; continue; }
-      cur = { name: decodeURIComponent(m[1]).replace(/-/g, " ").replace(/\s+/g, " ").trim(),
-              url: "https://www.homedepot.com/p/" + m[1] + "/" + id,
-              id: id, clear: false, oos: false };
-      byId[id] = cur;
-      out.push(cur);
-      if(out.length >= 60) break;
-    } else if(cur){
-      if(m[3] || m[6]) cur.clear = true;
-      if(m[4] || m[5]) cur.oos = true;
-    }
-  }
-  return out;
 }
 
 var sweepList = [];
@@ -1791,80 +1524,6 @@ function storeName(id){
 
 
 
-function handleHDShare(text){
-  /* a page with many product links is a sweep, not one item */
-  var sweep = parseSweep(text);
-  var pending = sweepWasPending();
-  if(sweep.length >= 4){ showSweep(sweep); return; }
-  if(pending && sweep.length){ showSweep(sweep); return; } /* small but real harvest */
-
-  var p = parseHDShare(text);
-
-  /* A category or search page that yielded no products means the
-     shortcut fetched it but didn't harvest links — almost always a
-     Match pattern without the /p/ piece. Say so instead of opening
-     a meaningless one-item sheet. */
-  if(pending || (p.url && /\/(s|b|c)\//i.test(p.url) && !/\/p\//i.test(p.url))){
-    var got = String(text || "").trim();
-    var preview = got ? got.replace(/\s+/g, " ").slice(0, 220) : "(nothing at all)";
-    showRead("hold", "!", "Category page — no products harvested",
-      sweep.length ? sweep.length + " link(s) found, need 4+" : "No product links in what came back", "",
-      "Your shortcut reached the category page but sent back no products. Most likely its Match Text pattern is missing the /p/ piece that harvests product links — copy the current pattern from the setup guide and paste it over the one in your shortcut.\n\nWhat actually arrived (" +
-      got.length + " chars): " + preview,
-      [{ t:"Open the setup guide", c:"btn--tag", fn:function(){
-          go("scan");
-          var g = document.querySelector(".guide");
-          if(g){ g.open = true; g.scrollIntoView({ behavior:"smooth", block:"center" }); }
-        }}]);
-    return;
-  }
-  var read = applyAppShot(parseAppShot(text)); /* shortcut-fetched data rides in the same text */
-  var bits = [];
-  if(p.name) bits.push(p.name);
-  if(p.internet) bits.push("Internet #" + p.internet);
-  if(p.was != null) bits.push("was $" + p.was.toFixed(2));
-  bits = bits.concat(read.bits);
-  if(p.price != null && read.bits.length === 0) bits.push("$" + p.price.toFixed(2));
-  var vals = {
-    name: p.name || read.name || "",
-    notes: (p.internet ? "Internet # " + p.internet + "\n" : "") +
-           (read.aisle ? read.aisle + "\n" : "") + (p.url || ""),
-    ocr: bits.length
-      ? "🔗 From link: " + bits.join(" · ") + (read.bits.length
-          ? " — add what you see on the shelf."
-          : " — links don't carry prices; tap “📸 From a screenshot” below to add them.")
-      : "🔗 Couldn't read much from that link — fill it in by hand."
-  };
-  if(Object.keys(read.clues).length) vals.clues = read.clues;
-  var ending = read.ending || endingFor(p.price);
-  if(ending) vals.ending = ending;
-  if(read.now != null) vals.now = read.now; else if(p.price != null) vals.now = p.price;
-  if(read.was != null) vals.was = read.was; else if(p.was != null) vals.was = p.was;
-
-  /* a scan armed the merge beacon — fold this share into that item */
-  var target = consumeMergeTarget();
-  if(target){
-    if(vals.now != null && target.now == null) target.now = vals.now;
-    if(vals.was != null && target.was == null) target.was = vals.was;
-    if(vals.name && !target.name) target.name = vals.name;
-    if(vals.notes){
-      vals.notes.split("\n").forEach(function(line){
-        if(line && (target.notes || "").indexOf(line) === -1){
-          target.notes = (target.notes ? target.notes + "\n" : "") + line;
-        }
-      });
-    }
-    target.clues = target.clues || {};
-    for(var k in read.clues){ if(read.clues[k]) target.clues[k] = true; }
-    if(ending && !target.ending) target.ending = ending;
-    save(); renderItems();
-    announceVerdict(target, { summary: (vals.ocr || "").replace("add what you see on the shelf.", "merged into your scan.") });
-    return;
-  }
-
-  openSheetWith(null, vals);
-}
-
 function showRead(tone, icon, label, name, code, note, acts){
   acts = (acts || []).slice();
   var hasLookup = acts.some(function(a){ return /Look up|Open product/.test(a.t); });
@@ -2030,8 +1689,8 @@ function snapTag(){
   });
 }
 
-/* read = the {clues, ending, summary} product of applyTagRead or
-   applyAppShot; null reopens the pending sheet untouched. */
+/* read = the {clues, ending, summary} product of applyTagRead;
+   null reopens the pending sheet untouched. */
 function resumeSheet(read){
   var pr = pendingResume || { id: null, values: {} };
   pendingResume = null;
@@ -2525,46 +2184,6 @@ Array.prototype.forEach.call(document.querySelectorAll("[data-copy]"), function(
   });
 });
 
-$("shotbtn").addEventListener("click", function(){ $("shotfile").click(); });
-$("sheetShot").addEventListener("click", function(){ $("shotfile").click(); });
-$("shotfile").addEventListener("change", function(){
-  /* copy the list out before clearing the input — clearing it
-     empties the FileList and the count would read as zero */
-  var list = Array.prototype.slice.call(this.files || []);
-  this.value = "";
-  if(!list.length) return;
-  var f = list[0];
-  /* several at once, and not mid-sheet: batch them into items */
-  if(list.length > 1 && !$("sheet").classList.contains("is-on")){
-    pendingResume = null;
-    readShotBatch(list);
-    return;
-  }
-  if($("sheet").classList.contains("is-on")){
-    pendingResume = { id: editingId, values: collectSheet() };
-    closeSheet();
-  } else {
-    pendingResume = { id: null, values: {} };
-  }
-  go("scan");
-  showRead("hold", "📸", "Reading the screenshot…", "", "", "One moment — pulling the prices out of it.", []);
-  readShotFile(f);
-});
-
-$("linkgo").addEventListener("click", function(){
-  var v = $("linkin").value.trim();
-  if(v){ $("linkin").value = ""; return handleHDShare(v); }
-  if(navigator.clipboard && navigator.clipboard.readText){
-    navigator.clipboard.readText().then(function(t){
-      if(t && /homedepot\.com/i.test(t)) handleHDShare(t);
-      else $("linkin").focus();
-    }).catch(function(){ $("linkin").focus(); });
-  } else $("linkin").focus();
-});
-$("linkin").addEventListener("keydown", function(e){
-  if(e.key === "Enter"){ e.preventDefault(); $("linkgo").click(); }
-});
-
 $("hdlook").addEventListener("click", function(){
   var u = normUPC($("f-upc").value);
   if(!u){ $("f-upc").focus(); return; }
@@ -2613,42 +2232,6 @@ loadCatalog().then(function(){ loadHdStores().catch(function(){}); }).catch(func
   $("seasonM").textContent = names[m];
   $("seasonList").innerHTML = "<b>Where pennies cluster this month</b>" +
     SEASON[m].map(function(s){ return esc(s); }).join(" · ");
-})();
-
-/* Share intake: the Android share target and the iPhone shortcut
-   both land here as ?title=&text=&url= query params. Every arrival
-   gets a visible response so a wiring problem is diagnosable. */
-(function(){
-  var q;
-  try{ q = new URLSearchParams(location.search); }catch(e){ return; }
-  if(!(q.has("title") || q.has("text") || q.has("url"))) return;
-  /* strip stray [ ] — a hand-built shortcut sometimes keeps the
-     placeholder brackets around its variables */
-  var shared = [q.get("title"), q.get("text"), q.get("url")].filter(Boolean).join(" ").replace(/[\[\]]/g, " ");
-  /* shortcut payloads can arrive encoded more than once */
-  for(var i = 0; i < 3 && /%[0-9A-Fa-f]{2}/.test(shared); i++){
-    try{
-      var dec = decodeURIComponent(shared);
-      if(dec === shared) break;
-      shared = dec;
-    }catch(e){ break; }
-  }
-  history.replaceState(null, "", location.pathname);
-  try{
-    if(/homedepot\.com/i.test(shared) ||
-       /\$\s*\d|"price"|clearance|OUT_OF_STOCK|LIMITED_STOCK|BACKORDERED/i.test(shared) ||
-       /home improvement retailer|the home depot|shop all services/i.test(shared) ||
-       /\/p\/[A-Za-z0-9][\w%-]{6,}\/\d{6,}/.test(shared)){ /* bare product paths — a sweep harvest */
-      handleHDShare(shared);
-    } else {
-      showRead("hold", "?", "Share arrived — no HD link in it", "Nothing to parse", "",
-        "The share reached the app but didn't include a homedepot.com link. It carried: “" +
-        (shared.trim() ? shared.trim().slice(0, 140) : "nothing at all") + "”", []);
-    }
-  }catch(e){
-    showRead("stop", "!", "Share arrived but broke", "Parsing error", "",
-      "Send this to your app tinkerer: " + (e && e.message ? e.message : e), []);
-  }
 })();
 
 if("serviceWorker" in navigator){

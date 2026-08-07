@@ -4,19 +4,42 @@
 # point: iOS will not hand the camera to a page that is not a secure
 # context, so HTTPS is not optional for this app.
 #
-# setup.sh fills in the two placeholders.
+# setup.sh fills in the three placeholders.
 
 {$PENNYRUN_HOST} {
 	encode gzip zstd
 
-	# The sweep rewrites this nightly and it lives outside the git checkout,
-	# so a deploy never collides with last night's data. Served with no-cache
-	# because a phone holding last week's list is the whole failure mode this
-	# rebuild was meant to end.
+	# pennyrun/index.html still does `fetch("clearance.json")` directly --
+	# the app reading /api/* instead is a Plan 2 change that hasn't
+	# happened yet, so this handler and the /api/* one below both have to
+	# keep working at the same time. Remove this block once the app is
+	# switched over; until then, deleting it serves the checked-in,
+	# never-updated pennyrun/clearance.json to every phone instead of the
+	# data this box (or its sweep, over PENNYRUN_API) actually collected --
+	# worse than not shipping this deploy at all.
 	handle /clearance.json {
 		root * {$PENNYRUN_DATA}
 		header Cache-Control "no-cache"
 		file_server
+	}
+
+	handle /api/* {
+		# `POST /api/v1/discovery` accepts a batch of observations and each
+		# accepted row becomes a permanent row in an append-only table --
+		# there is no DELETE, no UPDATE, no TRUNCATE (db/migrations/002_
+		# append_only.sql). tools/upload.py caps itself at 1000 rows a
+		# request client-side, and at ~450 bytes for a worst-case row (a
+		# 64-char item_id, a 64-char store_id, a 200-char name, all four
+		# numeric fields at their max width) that batch is under 500KB --
+		# but Caddy is the only thing standing between a client that
+		# ignores that cap and a database that can't shrink back down.
+		# 1MB leaves roughly double the legitimate worst case as headroom
+		# while still bounding how much unrecoverable damage one request
+		# can do.
+		request_body {
+			max_size 1MB
+		}
+		reverse_proxy 127.0.0.1:8000
 	}
 
 	handle {

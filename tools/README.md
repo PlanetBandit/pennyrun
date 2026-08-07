@@ -1,8 +1,15 @@
 # The sweep
 
 `pennyrun/clearance.json` is not hand-written. It is rebuilt by
-`sweep.py` from Home Depot's own pricing API, nightly, by the
-`Nightly clearance sweep` workflow.
+`sweep.py` from Home Depot's own pricing API, nightly, run directly on a
+home box (see "Where it can run" below) rather than by a GitHub Actions
+workflow — there used to be one, but every hosted runner is refused (see
+the measurements below), and a self-hosted runner on a home network
+turned out to be more moving parts than just running `tools.sweep` there
+directly and uploading the result. `tools/upload.py` ships each run's
+rows to the droplet's `POST /api/v1/discovery` when `PENNYRUN_API` and
+`PENNYRUN_INGEST_TOKEN` are set — see `deploy/README.md` for the serving
+side.
 
 ## Why it has to be built at all
 
@@ -24,9 +31,9 @@ more than can be priced at eight stores in a night. Hence three stages.
 ## The three stages
 
 ```bash
-python3 tools/sweep.py harvest    # tools/pool.json          (weekly)
-python3 tools/sweep.py discover   # tools/hot.json           (nightly)
-python3 tools/sweep.py scan       # pennyrun/clearance.json  (nightly)
+python3 -m tools.sweep harvest    # tools/pool.json          (weekly)
+python3 -m tools.sweep discover   # tools/hot.json           (nightly)
+python3 -m tools.sweep scan       # pennyrun/clearance.json  (nightly)
 ```
 
 **harvest** scrapes product ids out of Home Depot's clearance search
@@ -40,8 +47,27 @@ for the same budget, and a promoted item gets priced everywhere from then
 on. The cursor in `tools/cursor.json` remembers the shard, the offset and
 which store's turn it is.
 
-**scan** prices the pool plus the whole hot list at **every** store and
-writes the app's list.
+**scan** prices the **hot list at every store**, and the cold remainder of
+the pool at **one rotating store**, then writes the app's list.
+
+That split is measured, not assumed. On the run of 2026-08-07, across the
+four stores that answered before this address was cut off:
+
+| tier | items | on clearance somewhere |
+|---|---|---|
+| hot list | 1,288 | 1,173 (**91.1%**) |
+| cold pool | 8,097 | 0 (**0.00%**) |
+
+Pricing the cold pool everywhere was 86% of the night's requests for none of
+the hits — and that is structural, not luck: anything that goes on clearance
+is promoted to the hot list and priced everywhere from then on, so what is
+left in the cold pool has already been mined. A full sweep went from 4,696
+requests a night to 1,155, which matters because the wall this address hit
+that night was measured at roughly **2,350 requests in one window**.
+
+`scan` also stops when a store refuses a quarter of its chunks. That run kept
+going through four fully-refused stores, spending 2,348 requests that could
+not succeed and only deepened the block.
 
 Discovery is broad and shallow, verification is narrow and deep, and
 anything ever found on clearance keeps being checked until it stops
@@ -66,61 +92,70 @@ marked down. `discover` exists because of this.
 
 ## Where it can run — this one matters
 
-**GitHub's hosted runners cannot do this job.** Measured, not assumed:
+**GitHub's hosted runners cannot do this job, and neither can most other
+datacentre boxes.** Measured 2026-08-05, from `tools/hdclient.py`:
 
-| host | from here | from a GitHub runner |
+| client | residential | droplet |
 |---|---|---|
-| `apionline.homedepot.com` (pricing) | 200 | **206 "Generic Errors API"** |
-| `www.homedepot.com/sitemap/…` | 200 | 200 |
-| `www.homedepot.com/s/…` (search) | 200 | **403** |
+| `urllib` / plain `curl` | **206 refused** | **206 refused** |
+| `curl_cffi` (`safari17_0`, browser-grade TLS fingerprint) | 200 (4/4) | **206 refused** (0/4) |
 
-Four header variants were tried from the runner — origin/referer, a
-desktop user-agent, apollo client headers, and the plain request. All
-four came back 206. The same four from a residential address all return
-200. It is the address range, so no user-agent or header fixes it.
+Two independent checks guard the pricing gateway, and missing either one
+is fatal: a browser-grade TLS fingerprint (`urllib` never presents one,
+and is refused **even from a residential connection**) **and** a
+non-datacentre address (`curl_cffi`, with the fingerprint right, is
+still refused 0/4 from the droplet). It is not simply "the address
+range" — a plain client fails everywhere regardless of where it runs,
+and the right client still fails from a datacentre range. Both have to
+be true for a request to succeed: the right fingerprint, from the right
+kind of address. Neither is a user-agent or header fix; the fingerprint
+comes from `curl_cffi`'s TLS/HTTP2 handshake, and the address is about
+where the box physically is.
 
-The failure mode is nasty: `call()` swallows exceptions and returns an
-empty list, so a blocked runner looks exactly like eight stores with
-nothing on clearance. The first real run reported `0 hits` at all eight
-stores in 6–9 seconds each, against 34–69 seconds for a working scan.
-The scan's safety rail refused to overwrite the list, and the `probe`
-stage now runs first so the reason is on the line that matters.
+`tools/sweep.py`'s `call()` no longer swallows exceptions into an empty
+list, either — a refused or unreachable chunk is counted and surfaced
+(`in_batches`, the `BatchRun` it returns), and `discover()`/`scan()` die
+loudly the moment a run is mostly refused, rather than quietly reporting
+an empty catalogue as "nothing on clearance tonight." There is also no
+separate `probe` stage that runs before them anymore — `discover()` and
+`scan()` each check for themselves and fail fast the moment Home Depot
+refuses a request, on the line where it actually happened.
 
 ### Check any machine before trusting it
 
 Datacentre ranges vary — a VPS may or may not be refused, and guessing
-wastes an evening. Ask from the box itself:
+wastes an evening. `curl | python3 -` cannot check this: `checkhost.py`
+does `from tools import hdclient`, a package-relative import that needs
+the repo's directory layout on disk, and needs `curl_cffi` installed to
+actually reach Home Depot. Clone and install it instead:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/PlanetBandit/pennyrun/main/tools/checkhost.py | python3 -
+git clone --depth 1 https://github.com/PlanetBandit/pennyrun.git /tmp/pennyrun-check
+cd /tmp/pennyrun-check
+python3 -m venv .venv && .venv/bin/pip install -q -r tools/requirements.txt
+.venv/bin/python -m tools.checkhost
 ```
 
 It prints the status of all three hosts and exits non-zero if Home Depot
-won't quote a price. No checkout, no dependencies.
+won't quote a price.
 
 ### Running it there
 
-Whatever passes the check — a VPS, an old laptop, a Pi — register a
-self-hosted GitHub runner on it and set the repository variable
-`SWEEP_RUNNER` to `self-hosted`. The workflow reads that variable, so
-nothing in the code changes and the schedule, safety rails and commit
-logic all stay as they are.
-
-```bash
-sudo apt install -y python3 git
-mkdir ~/actions-runner && cd ~/actions-runner
-# grab the download + config commands from
-#   github.com/PlanetBandit/pennyrun → Settings → Actions → Runners → New runner
-sudo ./svc.sh install && sudo ./svc.sh start   # survives reboots
-```
-
-The job is about 7 minutes, mostly waiting on the network, so the
-smallest box is plenty.
-
-Until a runner exists the nightly run fails on the probe step every
-night, which is the honest signal that the list is not refreshing.
-Disable the workflow in the Actions tab if the noise is worse than the
-reminder.
+There is no GitHub Actions runner to register anymore — collection runs
+directly on whatever box passed the check above, on its own systemd
+timer (`deploy/setup.sh` installs `pennyrun-discover.timer` and
+`pennyrun-scan.timer` for exactly this). `scan()` uploads every run's
+hits to the droplet when `PENNYRUN_API` and `PENNYRUN_INGEST_TOKEN` are
+both set, and just writes `clearance.json` locally when they aren't —
+but a systemd unit does not inherit anyone's login shell, so setting
+those two in `~/.bashrc` or an interactive `export` does nothing for a
+timer-triggered run. `deploy/setup.sh` wires both into
+`pennyrun-scan.service` itself (`PENNYRUN_API` defaults to the host the
+box serves; the token comes from `/etc/pennyrun/ingest.env` via
+`EnvironmentFile=`) — if you're running the scan another way (a hand-rolled
+unit, plain cron), set them the same way: `Environment=`/`EnvironmentFile=`
+in the unit, or an explicit `env PENNYRUN_API=... PENNYRUN_INGEST_TOKEN=...`
+in the crontab line, not a shell profile.
 
 ## Which stores get swept
 
@@ -138,8 +173,8 @@ which only ever prices one store per night.
 | `WORKERS` | 20 | measured clean to 40; 20 leaves headroom |
 | `BATCH` | 16 | **do not raise** — the API caps `itemIds` here |
 
-`SWEEP_SLICE` is set from a repository variable in the workflow, so it
-can be changed without touching code.
+`SWEEP_SLICE` reads from the environment (see `tools/sweep.py`), so it
+can be changed per machine without touching code.
 
 ## Things that will bite you
 
