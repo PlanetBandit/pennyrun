@@ -1738,6 +1738,39 @@ function loadFromApi(){
   return loadCatalog().then(function(){ showCatalog(); }).catch(function(){});
 }
 
+/* clearance.json is the fallback, not the source.
+   It is written by whichever machine ran the sweep -- a residential box, never
+   the droplet -- so the copy the droplet serves is whatever setup.sh seeded and
+   never changes. The database behind /api is current; the file can be days old. */
+function fileCatalog(){
+  return fetch("clearance.json").then(function(r){ return r.json(); })
+    .then(function(d){ CATALOG = d; buildCatIndex(d); return d; });
+}
+
+function apiCatalog(picked){
+  return Promise.all(picked.map(function(id){
+    return apiJSON("/store/" + encodeURIComponent(id) + "/clearance?limit=400")
+             .catch(function(){ return []; });
+  })).then(function(lists){
+    var rows = [];
+    lists.forEach(function(list){
+      (list || []).forEach(function(r){
+        /* into the same 15-field shape the rest of the app speaks, so nothing
+           downstream needs to know where the row came from */
+        rows.push([r.name, r.item_id, r.category, Number(r.clearance_price),
+                   Number(r.list_price), Number(r.pct_off), r.store_id,
+                   r.quantity, r.store_only ? 1 : 0, r.canonical_url,
+                   r.upc, null, null, 0, null]);
+      });
+    });
+    if(!rows.length) return null;
+    var d = { harvested: "live", hits: rows, total_hits: rows.length,
+              stores_n: picked.length };
+    CATALOG = d; buildCatIndex(d);
+    return d;
+  }).catch(function(){ return null; });
+}
+
 function loadCatalog(){
   if(CATALOG) return Promise.resolve(CATALOG);
   var picked = (state.pickedStores || []).filter(Boolean);
