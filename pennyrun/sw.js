@@ -2,7 +2,7 @@
    Everything the app needs is local, so one pass at install
    makes the whole thing work with zero bars in the store. */
 
-var CACHE = "pennyrun-v60";
+var CACHE = "pennyrun-v61";
 var ASSETS = [
   "./",
   "./index.html",

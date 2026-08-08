@@ -318,6 +318,7 @@ input,select,textarea{font-family:inherit;font-size:16px}
 .chk__fill{height:100%;width:0%;background:var(--tag);transition:width .4s ease}
 .chk__fill.is-done{background:var(--go)}
 .chk__fill.is-bad{background:var(--stop)}
+.seen{color:var(--mute);font-weight:400}
 .chk__stores{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
 .chk__s{font-family:var(--mono);font-size:11px;padding:3px 8px;border-radius:10px;
         border:1px solid var(--line);color:var(--mute)}
@@ -1433,7 +1434,8 @@ function renderSweep(){
       (picked ? " at your " + picked + " selected store" + (picked === 1 ? "" : "s") : " across " +
         ((CATALOG && CATALOG.stores_n) || "all") + " nearby stores") +
       (CATALOG && CATALOG.pool_n ? " · " + CATALOG.pool_n + " products swept" : "") + more +
-      (CATALOG && CATALOG.harvested ? " " + CATALOG.harvested : "") +
+      (CATALOG && CATALOG.newest ? " · checked " + timeAgo(CATALOG.newest)
+        : CATALOG && CATALOG.harvested ? " · swept " + CATALOG.harvested : "") +
       (fell ? ". " + fell + " dropped overnight — those lead." : ". Deepest markdown first; empty shelves last.");
   } else {
     var flagged = list.filter(function(c){ return c.clear || c.oos; }).length;
@@ -1474,7 +1476,14 @@ function renderSweep(){
         html += '<span class="fell">↓ $' + c.drop.toFixed(2) + ' → $' + c.price.toFixed(2) + ' overnight</span>';
       }
       /* the clearance price is that store's only — say which, loudly */
-      if(c.store) html += '<span class="atstore">@ ' + esc(storeName(c.store)) + '</span>';
+      if(c.store){
+        /* A clearance price belongs to one building AND one moment -- the
+           store without the time is half the fact, and markdowns cascade
+           daily. Shown together for that reason. */
+        html += '<span class="atstore">@ ' + esc(storeName(c.store)) +
+                (c.seen ? ' <span class="seen">· checked ' + timeAgo(c.seen) + '</span>' : '') +
+                '</span>';
+      }
       var ids = [];
       if(c.sku) ids.push("SKU " + c.sku);
       if(c.upc) ids.push("UPC " + c.upc);
@@ -1767,12 +1776,21 @@ function apiCatalog(picked){
         rows.push([r.name, r.item_id, r.category, Number(r.clearance_price),
                    Number(r.list_price), Number(r.pct_off), res.id,
                    r.quantity, r.store_only ? 1 : 0, r.canonical_url,
-                   r.upc, null, null, 0, null]);
+                   r.upc, null, null, 0, null,
+                   /* field 15: when this price was last confirmed. The file
+                      format stops at 14, so file rows simply have no date and
+                      the UI shows none -- rather than inventing one. */
+                   r.observed_at || null]);
       });
     });
     if(!rows.length) return null;
-    var d = { harvested: "live", hits: rows, total_hits: rows.length,
-              stores_n: picked.length };
+    var newest = 0;
+    rows.forEach(function(r){
+      var t = r[15] ? Date.parse(r[15]) : 0;
+      if(t > newest) newest = t;
+    });
+    var d = { hits: rows, total_hits: rows.length, stores_n: picked.length,
+              newest: newest || null };
     CATALOG = d; buildCatIndex(d);
     return d;
   }).catch(function(){ return null; });
@@ -1807,7 +1825,8 @@ function showCatalog(){
                price: r[3], was: r[4], pct: r[5], store: r[6] || null,
                qty: (r[7] == null ? null : r[7]), upc: r[10] || "",
                sku: r[11] || "", model: r[12] || "", sup: !!r[13],
-               drop: (r[14] == null ? null : r[14]) };
+               drop: (r[14] == null ? null : r[14]),
+               seen: r[15] ? Date.parse(r[15]) : null };
     });
     /* A price that fell last night is a markdown still in motion, and that
        beats a deeper cut that has sat still for a week. Empty shelves sink
