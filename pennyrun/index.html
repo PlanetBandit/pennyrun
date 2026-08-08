@@ -1712,7 +1712,12 @@ function renderSweep(){
       (CATALOG && CATALOG.pool_n ? " · " + CATALOG.pool_n + " products swept" : "") + more +
       (CATALOG && CATALOG.newest ? " · checked " + timeAgo(CATALOG.newest)
         : CATALOG && CATALOG.harvested ? " · swept " + CATALOG.harvested : "") +
-      (fell ? ". " + fell + " dropped overnight — those lead." : ". Deepest markdown first; empty shelves last.");
+      /* Only claim the curated order when it is actually in force. Under
+         an explicit sort the "· by price ↓" chip above has already said
+         what the order is, and "deepest markdown first" would be false. */
+      (state.sortKey && state.sortKey !== "best" ? "."
+        : fell ? ". " + fell + " dropped overnight — those lead."
+        : ". Deepest markdown first; empty shelves last.");
   } else {
     var flagged = shown.filter(function(x){ return x[0].clear || x[0].oos; }).length;
     $("sweepsum").textContent = flagged
