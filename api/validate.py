@@ -85,6 +85,7 @@ URL_MAX_LEN = 300
 CATALOG_FIELD_MAX_LEN = 64  # upc / store_sku / model_number / replacement_id
 CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f\x7f]")
 
+from db.categories import canonical
 
 def _money(raw, field):
     try:
@@ -163,7 +164,10 @@ def check(obs):
     store_id = obs["store_id"]
 
     name = _bounded_text(obs.get("name"), "name", NAME_MAX_LEN)
-    category = _degrade_text(obs.get("category"), CATEGORY_MAX_LEN)
+    # One spelling per department: Home Depot sends "Outdoor" and
+    # "Outdoors" for the same aisle, which is two chips in the app for
+    # one place, and switching one off leaves the other behind.
+    category = canonical(_degrade_text(obs.get("category"), CATEGORY_MAX_LEN))
     canonical_url = _degrade_text(obs.get("canonical_url"), URL_MAX_LEN)
     upc = _degrade_text(obs.get("upc"), CATALOG_FIELD_MAX_LEN)
     store_sku = _degrade_text(obs.get("store_sku"), CATALOG_FIELD_MAX_LEN)

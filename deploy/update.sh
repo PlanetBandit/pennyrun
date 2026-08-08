@@ -30,6 +30,22 @@ if [ -f /etc/caddy/sites/pennyrun.caddyfile ]; then
 	systemctl reload caddy 2>/dev/null || true
 fi
 
+# Schema before code, always: a migration that has not run is a column the
+# new code is about to select. update.sh did not apply migrations at all,
+# for the same reason it did not restart the API -- the site is served
+# straight off the checkout, so "deploy" meant "git pull" and nothing else.
+# A migration would have sat in the tree unapplied and the first symptom
+# would have been the API erroring on a column that plainly exists in
+# db/migrations.
+if [ -x "$DIR/.venv/bin/python" ]; then
+	# same credentials the service runs with, nothing new on disk
+	set -a
+	. /root/.pennyrun-db.env
+	set +a
+	applied=$(cd "$DIR" && ./.venv/bin/python -m db.migrate)
+	echo "$applied" | sed 's/^/    /'
+fi
+
 # The API is a long-lived uvicorn process: it imported api/main.py at start
 # and will not see a word of the file we just pulled. This script reloaded
 # Caddy and stopped, so every deploy carrying an API change appeared to

@@ -18,6 +18,8 @@ import json
 import pathlib
 import sys
 
+from db.categories import canonical
+
 HERE = pathlib.Path(__file__).parent.resolve()
 ROOT = HERE.parent
 
@@ -137,7 +139,7 @@ def products(conn, path):
             skipped += 1
             continue
         seen.setdefault(r[1], (
-            r[1], r[0], r[2] or None, r[10] or None, r[11] or None,
+            r[1], r[0], canonical(r[2]), r[10] or None, r[11] or None,
             r[12] or None, r[9] or None, "1" if r[13] else None))
 
     with conn.cursor() as cur:

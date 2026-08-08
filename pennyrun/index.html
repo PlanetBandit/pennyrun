@@ -1473,7 +1473,10 @@ var CAT_SHORT = {
   "Lawn & Garden":"GARDEN", "Heating & Cooling":"HVAC", "Doors & Windows":"DOORS",
   "Storage & Organization":"STORAGE", "Lighting & Ceiling Fans":"LIGHT",
   "Electrical & Smart Home":"ELEC", "Paint & Paint Supplies":"PAINT",
-  "Decor & Furniture":"DECOR", "Hardware & Fasteners":"HARDW"
+  "Decor & Furniture":"DECOR", "Hardware & Fasteners":"HARDW",
+  /* the one canonical department the 7-character fallback mangles --
+     it truncates to "Lumber " with the ampersand hanging off the end */
+  "Lumber & Composites":"LUMBER"
 };
 function shortCat(c){ return CAT_SHORT[c] || (c || "").slice(0, 7); }
 
