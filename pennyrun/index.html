@@ -1731,39 +1731,18 @@ function chkDone(title, note){
   loadFromApi();
 }
 
-/* Read the freshly-checked prices back out of the droplet. The app's older
-   path reads the bundled clearance.json; this one asks for exactly the
-   stores the user picked, so what they see is what was just collected. */
+/* After a check, throw away what we have and read it again -- same path,
+   so there is only one way catalog data ever enters the app. */
 function loadFromApi(){
-  var picked = (state.pickedStores || []).filter(Boolean);
-  if(!picked.length) return;
-  Promise.all(picked.map(function(id){
-    return apiJSON("/store/" + encodeURIComponent(id) + "/clearance?limit=400")
-             .catch(function(){ return []; });
-  })).then(function(lists){
-    var rows = [];
-    lists.forEach(function(list){
-      (list || []).forEach(function(r){
-        /* into the same 15-field shape the rest of the app already speaks,
-           so nothing downstream needs to know where the row came from */
-        rows.push([r.name, r.item_id, r.category, Number(r.clearance_price),
-                   Number(r.list_price), Number(r.pct_off), r.store_id,
-                   r.quantity, r.store_only ? 1 : 0, r.canonical_url,
-                   r.upc, null, null, 0, null]);
-      });
-    });
-    if(!rows.length) return;
-    CATALOG = { harvested: "just now", hits: rows, total_hits: rows.length,
-                stores_n: picked.length };
-    buildCatIndex(CATALOG);
-    showCatalog();
-  });
+  CATALOG = null;
+  return loadCatalog().then(function(){ showCatalog(); }).catch(function(){});
 }
 
 function loadCatalog(){
   if(CATALOG) return Promise.resolve(CATALOG);
-  return fetch("clearance.json").then(function(r){ return r.json(); })
-    .then(function(d){ CATALOG = d; buildCatIndex(d); return d; });
+  var picked = (state.pickedStores || []).filter(Boolean);
+  if(!picked.length) return fileCatalog();
+  return apiCatalog(picked).then(function(d){ return d || fileCatalog(); });
 }
 
 /* hits carry [name, id, cat, clearancePrice, wasPrice, pctOff] and
