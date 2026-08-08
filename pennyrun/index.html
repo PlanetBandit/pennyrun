@@ -1750,15 +1750,22 @@ function fileCatalog(){
 function apiCatalog(picked){
   return Promise.all(picked.map(function(id){
     return apiJSON("/store/" + encodeURIComponent(id) + "/clearance?limit=400")
-             .catch(function(){ return []; });
-  })).then(function(lists){
+             .then(function(list){ return { id: id, list: list || [] }; })
+             .catch(function(){ return { id: id, list: [] }; });
+  })).then(function(results){
     var rows = [];
-    lists.forEach(function(list){
-      (list || []).forEach(function(r){
+    results.forEach(function(res){
+      res.list.forEach(function(r){
         /* into the same 15-field shape the rest of the app speaks, so nothing
-           downstream needs to know where the row came from */
+           downstream needs to know where the row came from.
+
+           Field 6 is the store, and it comes from the store we ASKED for --
+           /store/{id}/clearance does not echo it back, because the id is in
+           the path. Reading r.store_id gave undefined, showCatalog filters on
+           picked.indexOf(r[6]), and every row was silently discarded: 400 rows
+           fetched, nothing shown, "nothing on clearance at those stores". */
         rows.push([r.name, r.item_id, r.category, Number(r.clearance_price),
-                   Number(r.list_price), Number(r.pct_off), r.store_id,
+                   Number(r.list_price), Number(r.pct_off), res.id,
                    r.quantity, r.store_only ? 1 : 0, r.canonical_url,
                    r.upc, null, null, 0, null]);
       });
