@@ -51,9 +51,25 @@ def stores(zip: str | None = None, lat: float | None = None,
         return cur.fetchall()
 
 
+def _excluded(exclude: str) -> list:
+    """Comma-separated departments to leave out, normalised the way the
+    counts endpoint reports them so the two always agree."""
+    return [c.strip() for c in (exclude or "").split(",") if c.strip()][:80]
+
+
 @app.get(V + "/store/{store_id}/clearance")
 def store_clearance(store_id: str, limit: int = Query(200, le=1000),
-                    min_pct: float = 0):
+                    min_pct: float = 0, exclude: str = ""):
+    """Rows ordered deepest-first, minus any departments the caller excludes.
+
+    The exclusion has to happen HERE, not in the app. A typical store is
+    ~85% paint, and paint is discounted hardest, so it owns the whole top
+    of this ordering. A client that fetched `limit` rows and then dropped
+    paint locally would be filtering a paint-saturated prefix: at limit=400
+    that left 7 non-paint rows out of the ~105 the store actually had.
+    Spending the row budget after the exclusion is the difference between
+    a filter and the appearance of one.
+    """
     with rows() as cur:
         cur.execute(
             f"with latest as ({LATEST}) "
@@ -64,8 +80,30 @@ def store_clearance(store_id: str, limit: int = Query(200, le=1000),
             "  left join candidate c using (item_id) "
             " where l.store_id = %s and l.clearance_price is not null "
             "   and coalesce(l.pct_off, 0) >= %s "
+            "   and coalesce(p.category, 'Other') <> all(%s) "
             " order by c.penny_score desc nulls last, l.pct_off desc limit %s",
-            (store_id, min_pct, limit))
+            (store_id, min_pct, _excluded(exclude), limit))
+        return cur.fetchall()
+
+
+@app.get(V + "/store/{store_id}/categories")
+def store_categories(store_id: str, min_pct: float = 0):
+    """Every department at this store with its true row count.
+
+    Deliberately independent of `limit`: the chips in the app must count
+    what the store has, not what one page of results happened to contain,
+    or switching a department off would promise rows that were never
+    fetched -- and switching it on would appear to lose some.
+    """
+    with rows() as cur:
+        cur.execute(
+            f"with latest as ({LATEST}) "
+            "select coalesce(p.category, 'Other') as category, count(*) as n "
+            "  from latest l join product p using (item_id) "
+            " where l.store_id = %s and l.clearance_price is not null "
+            "   and coalesce(l.pct_off, 0) >= %s "
+            " group by 1 order by n desc, category",
+            (store_id, min_pct))
         return cur.fetchall()
 
 

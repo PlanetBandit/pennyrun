@@ -35,7 +35,7 @@
   --stop-bg:#F8E2E0;
   --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
   --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
-  --tabh:58px;
+  --tabh:48px;
   --lift:0 1px 2px rgba(20,22,26,.06);
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
@@ -48,8 +48,8 @@ body{
   background:var(--concrete);
   color:var(--ink);
   font-family:var(--sans);
-  font-size:15.5px;
-  line-height:1.4;
+  font-size:14.5px;
+  line-height:1.34;
   -webkit-font-smoothing:antialiased;
   padding-bottom:calc(var(--tabh) + env(safe-area-inset-bottom));
 }
@@ -61,23 +61,23 @@ input,select,textarea{font-family:inherit;font-size:16px}
   position:sticky;top:0;z-index:40;
   background:var(--ink);color:#fff;
   border-bottom:2px solid var(--tag);
-  padding:calc(env(safe-area-inset-top) + 7px) 14px 7px;
-  display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding:calc(env(safe-area-inset-top) + 5px) 11px 5px;
+  display:flex;align-items:center;justify-content:space-between;gap:10px;
 }
 .hdr__mark{
-  font-family:var(--sans);font-weight:800;font-size:13.5px;
-  letter-spacing:.16em;text-transform:uppercase;
+  font-family:var(--sans);font-weight:800;font-size:12.5px;
+  letter-spacing:.15em;text-transform:uppercase;
 }
 .hdr__mark span{color:var(--tag)}
-.hdr__tally{font-family:var(--mono);font-size:11px;color:#A9A69E;text-align:right;line-height:1.35}
+.hdr__tally{font-family:var(--mono);font-size:10px;color:#A9A69E;text-align:right;line-height:1.3}
 .hdr__tally b{color:var(--tag);font-weight:700}
 
 /* ---------- panes ---------- */
-.pane{display:none;padding:12px 12px 20px}
+.pane{display:none;padding:9px 9px 16px}
 .pane.is-on{display:block}
 .pane__title{
-  font-size:11px;font-weight:800;letter-spacing:.15em;text-transform:uppercase;
-  color:var(--mute);margin:2px 0 9px;
+  font-size:10px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--mute);margin:1px 0 6px;
 }
 
 /* ---------- scanner ---------- */
@@ -110,15 +110,15 @@ input,select,textarea{font-family:inherit;font-size:16px}
   border:1px solid rgba(255,255,255,.18);
 }
 .scan__tool.is-on{background:var(--tag);color:var(--ink);border-color:var(--tag)}
-.scan__bar{display:flex;gap:7px;margin-top:9px}
+.scan__bar{display:flex;gap:5px;margin-top:6px}
 .scan__mode{
-  flex:1;padding:9px 6px;border-radius:9px;background:var(--paper);
-  border:1px solid var(--line);font-size:11px;font-weight:800;
+  flex:1;padding:7px 5px;border-radius:7px;background:var(--paper);
+  border:1px solid var(--line);font-size:10.5px;font-weight:800;
   letter-spacing:.08em;text-transform:uppercase;color:var(--mute);
   box-shadow:var(--lift);
 }
 .scan__mode.is-on{background:var(--ink);color:#fff;border-color:var(--ink)}
-.scan__hint{font-size:12.5px;color:var(--mute);margin:8px 2px 0;line-height:1.45}
+.scan__hint{font-size:11.5px;color:var(--mute);margin:6px 2px 0;line-height:1.38}
 
 /* ---------- verdict readout ---------- */
 .read{
@@ -127,14 +127,14 @@ input,select,textarea{font-family:inherit;font-size:16px}
   box-shadow:var(--lift);
 }
 .read.is-hidden{display:none}
-.read__top{padding:11px 13px;display:flex;align-items:flex-start;gap:10px}
+.read__top{padding:8px 10px;display:flex;align-items:flex-start;gap:8px}
 .read__icon{
-  width:34px;height:34px;flex:none;border-radius:8px;
+  width:28px;height:28px;flex:none;border-radius:7px;
   display:flex;align-items:center;justify-content:center;
   font-size:17px;font-weight:800;
 }
 .read__label{font-size:10.5px;font-weight:800;letter-spacing:.13em;text-transform:uppercase}
-.read__name{font-size:15.5px;font-weight:700;margin:2px 0 0;line-height:1.25}
+.read__name{font-size:14.5px;font-weight:700;margin:1px 0 0;line-height:1.22}
 .read__code{font-family:var(--mono);font-size:11px;color:var(--mute);margin-top:3px;word-break:break-all}
 .read--go{background:var(--go-bg)}
 .read--go .read__icon{background:var(--go);color:#fff}
@@ -145,22 +145,22 @@ input,select,textarea{font-family:inherit;font-size:16px}
 .read--stop{background:var(--stop-bg)}
 .read--stop .read__icon{background:var(--stop);color:#fff}
 .read--stop .read__label{color:var(--stop)}
-.read__body{padding:0 13px 11px}
-.read__note{font-size:13px;margin:0 0 8px;line-height:1.45;white-space:pre-line}
+.read__body{padding:0 10px 8px}
+.read__note{font-size:12.5px;margin:0 0 6px;line-height:1.38;white-space:pre-line}
 .read__acts{display:flex;flex-wrap:wrap;gap:6px}
 
 /* ---------- buttons ---------- */
 .btn{
-  padding:10px 12px;border-radius:9px;font-size:13.5px;font-weight:700;
+  padding:8px 11px;border-radius:7px;font-size:13px;font-weight:700;
   border:1px solid var(--ink);background:var(--ink);color:#fff;
-  min-height:42px;display:inline-flex;align-items:center;justify-content:center;gap:5px;
+  min-height:36px;display:inline-flex;align-items:center;justify-content:center;gap:5px;
 }
 .btn--ghost{background:transparent;color:var(--ink)}
 .btn--tag{background:var(--tag);border-color:var(--tag-edge);color:var(--ink)}
 .btn--go{background:var(--go);border-color:var(--go);color:#fff}
 .btn--stop{background:var(--stop);border-color:var(--stop);color:#fff}
 .btn--wide{width:100%}
-.btn--sm{padding:7px 10px;font-size:12.5px;min-height:34px}
+.btn--sm{padding:5px 9px;font-size:11.5px;min-height:29px}
 .btn:disabled{opacity:.4}
 
 /* ---------- shelf tag (signature element) ---------- */
@@ -168,7 +168,7 @@ input,select,textarea{font-family:inherit;font-size:16px}
   position:relative;background:var(--tag);border-radius:4px;
   border:1px solid var(--tag-edge);
   box-shadow:0 1px 0 rgba(0,0,0,.14),0 5px 12px -8px rgba(0,0,0,.35);
-  padding:10px 12px 8px;margin-bottom:10px;overflow:hidden;
+  padding:8px 10px 7px;margin-bottom:7px;overflow:hidden;
 }
 .tag--go{background:#0CC257;border-color:#0A7A3C}
 .tag--stop{background:#F5392B;border-color:#8F150C}
@@ -212,26 +212,26 @@ input,select,textarea{font-family:inherit;font-size:16px}
 
 /* ---------- steps ---------- */
 .step{
-  display:flex;gap:10px;align-items:flex-start;background:var(--paper);
-  border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:7px;
+  display:flex;gap:8px;align-items:flex-start;background:var(--paper);
+  border:1px solid var(--line);border-radius:7px;padding:7px 9px;margin-bottom:4px;
   text-align:left;width:100%;box-shadow:var(--lift);
 }
 .step.is-done{background:transparent;border-style:dashed;opacity:.6;box-shadow:none}
 .step.is-done .step__text{text-decoration:line-through}
 .step__num{
-  width:24px;height:24px;flex:none;border-radius:50%;background:var(--ink);color:#fff;
+  width:20px;height:20px;flex:none;border-radius:50%;background:var(--ink);color:#fff;
   font-family:var(--mono);font-size:11px;font-weight:700;
   display:flex;align-items:center;justify-content:center;
 }
 .step.is-done .step__num{background:var(--go)}
-.step__text{font-size:13.5px;line-height:1.35}
+.step__text{font-size:13px;line-height:1.3}
 .step__sub{display:block;font-size:12px;color:var(--mute);margin-top:2px;line-height:1.4}
 
 /* ---------- flags ---------- */
-.flagtabs{display:flex;gap:7px;margin-bottom:10px}
+.flagtabs{display:flex;gap:5px;margin-bottom:7px}
 .flagtab{
-  flex:1;padding:9px 6px;border-radius:9px;border:1px solid var(--line);
-  background:var(--paper);font-size:11px;font-weight:800;
+  flex:1;padding:7px 5px;border-radius:7px;border:1px solid var(--line);
+  background:var(--paper);font-size:10.5px;font-weight:800;
   letter-spacing:.07em;text-transform:uppercase;color:var(--mute);
   box-shadow:var(--lift);
 }
@@ -241,9 +241,9 @@ input,select,textarea{font-family:inherit;font-size:16px}
 .flaglist{display:none}
 .flaglist.is-on{display:block}
 .flagitem{
-  background:var(--paper);border:1px solid var(--line);border-radius:10px;
-  padding:10px 12px;margin-bottom:7px;font-size:13.5px;line-height:1.4;
-  border-left-width:4px;box-shadow:var(--lift);
+  background:var(--paper);border:1px solid var(--line);border-radius:7px;
+  padding:7px 9px;margin-bottom:4px;font-size:13px;line-height:1.34;
+  border-left-width:3px;box-shadow:var(--lift);
 }
 .flaglist[data-f="go"] .flagitem{border-left-color:var(--go)}
 .flaglist[data-f="hold"] .flagitem{border-left-color:var(--hold)}
@@ -253,8 +253,8 @@ input,select,textarea{font-family:inherit;font-size:16px}
 /* ---------- clue toggles (assessment) ---------- */
 .clue{
   display:flex;gap:10px;align-items:flex-start;width:100%;text-align:left;
-  background:var(--paper);border:1px solid var(--line);border-radius:9px;
-  padding:9px 11px;margin-bottom:6px;font-size:13.5px;line-height:1.3;
+  background:var(--paper);border:1px solid var(--line);border-radius:7px;
+  padding:7px 9px;margin-bottom:4px;font-size:13px;line-height:1.28;
   box-shadow:var(--lift);
 }
 .clue__box{
@@ -269,7 +269,7 @@ input,select,textarea{font-family:inherit;font-size:16px}
 .clue__sub{display:block;font-size:11.5px;color:var(--mute);margin-top:2px;line-height:1.35}
 .seg{display:flex;gap:5px;flex-wrap:wrap}
 .seg__b{
-  flex:1;min-width:64px;padding:8px 5px;border-radius:9px;border:1px solid var(--line);
+  flex:1;min-width:56px;padding:6px 4px;border-radius:7px;border:1px solid var(--line);
   background:var(--paper);font-size:11px;font-weight:800;
   letter-spacing:.04em;text-transform:uppercase;color:var(--mute);
   box-shadow:var(--lift);
@@ -308,18 +308,18 @@ input,select,textarea{font-family:inherit;font-size:16px}
 /* On-demand area check. The droplet queues, a residential collector works
    the queue -- the phone cannot ask Home Depot itself (their edge refuses
    the CORS preflight), so everything here talks only to our own origin. */
-.chk{border:1px solid var(--line);border-radius:6px;padding:12px;margin-bottom:10px;
+.chk{border:1px solid var(--line);border-radius:7px;padding:8px 9px;margin-bottom:7px;
      background:var(--paper)}
 .chk__row{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
-.chk__label{font-weight:650;font-size:15px}
+.chk__label{font-weight:650;font-size:13.5px}
 .chk__count{font-family:var(--mono);font-size:12px;color:var(--mute);
             font-variant-numeric:tabular-nums}
-.chk__bar{height:8px;border-radius:4px;background:var(--hair);overflow:hidden;margin-top:8px}
+.chk__bar{height:6px;border-radius:3px;background:var(--line);overflow:hidden;margin-top:6px}
 .chk__fill{height:100%;width:0%;background:var(--tag);transition:width .4s ease}
 .chk__fill.is-done{background:var(--go)}
 .chk__fill.is-bad{background:var(--stop)}
 .seen{color:var(--mute);font-weight:400}
-.chk__stores{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.chk__stores{display:flex;flex-wrap:wrap;gap:4px;margin-top:7px}
 .chk__s{font-family:var(--mono);font-size:11px;padding:3px 8px;border-radius:10px;
         border:1px solid var(--line);color:var(--mute)}
 .chk__s.is-ready{border-color:var(--go);color:var(--go);background:var(--go-bg)}
@@ -329,46 +329,98 @@ input,select,textarea{font-family:inherit;font-size:16px}
 
 .linkbox{display:flex;gap:7px}
 .linkbox .field__i{flex:1;min-width:0}
+/* ---------- the walking list ----------
+   Every fact that used to own a line of its own is now a chip on one
+   wrapping meta line, so a row is three lines at worst instead of six
+   and a phone screen holds roughly twice as many. Nothing was dropped
+   to get there -- price, was-price, overnight fall, shelf count, store,
+   freshness and the tag numbers are all still on the row. */
 .storeitem{
-  display:flex;align-items:center;gap:9px;background:var(--paper);
-  border:1px solid var(--line);border-radius:10px;padding:10px 11px;
-  margin-bottom:6px;font-size:13.5px;line-height:1.3;box-shadow:var(--lift);
+  display:flex;align-items:flex-start;gap:7px;background:var(--paper);
+  border:1px solid var(--line);border-radius:7px;padding:6px 8px;
+  margin-bottom:4px;font-size:12.5px;line-height:1.25;box-shadow:var(--lift);
+  width:100%;text-align:left;
 }
-.storeitem b{display:block}
-.storeitem__addr{display:block;font-size:11.5px;color:var(--mute);margin-top:1px}
-.storeitem__d{font-family:var(--mono);font-size:11.5px;font-weight:700;white-space:nowrap}
+.storeitem__main{display:block;flex:1;min-width:0}
+.storeitem__top{display:flex;align-items:flex-start;gap:6px}
+.storeitem b{
+  flex:1;min-width:0;font-size:12.5px;font-weight:700;line-height:1.22;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;
+}
+/* one wrapping row of chips; the gap does the separating so no
+   punctuation has to, and a chip that is absent leaves no gap behind */
+.storeitem__meta{
+  display:flex;flex-wrap:wrap;align-items:baseline;gap:1px 6px;
+  margin-top:2px;font-size:11px;color:var(--mute);line-height:1.35;
+}
+.storeitem__addr{display:block;font-size:11px;color:var(--mute);margin-top:1px}
+.storeitem__d{font-family:var(--mono);font-size:11px;font-weight:700;white-space:nowrap}
 .cattile{
-  flex:none;width:52px;min-height:38px;border-radius:8px;background:var(--ink);color:var(--tag);
-  font-family:var(--sans);font-size:8.5px;font-weight:800;letter-spacing:.04em;
+  flex:none;width:38px;min-height:30px;border-radius:5px;background:var(--ink);color:var(--tag);
+  font-family:var(--sans);font-size:7.5px;font-weight:800;letter-spacing:.03em;
   text-transform:uppercase;display:flex;align-items:center;justify-content:center;
-  text-align:center;padding:3px 2px;line-height:1.15;word-break:break-word;
+  text-align:center;padding:2px;line-height:1.1;word-break:break-word;
 }
-.storeitem__price{font-size:13px;font-weight:800;color:var(--go)}
+.storeitem__price{font-size:12.5px;font-weight:800;color:var(--go);font-variant-numeric:tabular-nums}
 .atstore{
-  display:inline-block;margin-top:3px;font-size:10.5px;font-weight:800;
-  letter-spacing:.04em;text-transform:uppercase;background:var(--tag);
-  color:var(--ink);border-radius:4px;padding:1px 5px;
+  font-size:10px;font-weight:800;letter-spacing:.03em;text-transform:uppercase;
+  background:var(--tag);color:var(--ink);border-radius:3px;padding:0 4px;
+}
+.storeitem__flag{
+  font-size:10px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;
+  color:var(--hold);
 }
 .idline{
-  display:block;margin-top:3px;font-family:var(--mono);font-size:10px;
-  color:var(--mute);letter-spacing:.02em;
+  display:block;margin-top:2px;font-family:var(--mono);font-size:9.5px;
+  color:var(--mute);letter-spacing:.01em;
 }
-.storeitem__was{font-size:11.5px;color:var(--mute);font-weight:400}
+.storeitem__was{font-size:11px;color:var(--mute);font-weight:400;text-decoration:line-through}
 .qtyok{color:var(--go);font-weight:700}
 .qtyno{color:var(--stop);font-weight:700}
 .fell{
-  display:inline-block;margin-top:3px;font-size:10.5px;font-weight:800;
-  letter-spacing:.03em;background:var(--go);color:#fff;border-radius:4px;padding:1px 5px;
+  font-size:10px;font-weight:800;letter-spacing:.02em;
+  background:var(--go);color:#fff;border-radius:3px;padding:0 4px;
 }
 .storeitem__off{
-  font-family:var(--mono);font-size:11px;font-weight:800;white-space:nowrap;
-  background:var(--stop);color:#fff;border-radius:5px;padding:2px 5px;
+  flex:none;font-family:var(--mono);font-size:10.5px;font-weight:800;white-space:nowrap;
+  background:var(--stop);color:#fff;border-radius:4px;padding:1px 4px;
 }
+
+/* ---------- department filter ----------
+   Roughly 85% of a store's clearance is paint. Somebody hunting tools
+   should not have to scroll past six hundred gallons of it to find
+   eighteen. Chips are ordered by count so the biggest pile is the
+   easiest thing to switch off. */
+.catf{
+  background:var(--paper);border:1px solid var(--line);border-radius:7px;
+  padding:6px 8px;margin-bottom:6px;box-shadow:var(--lift);
+}
+.catf__head{display:flex;align-items:center;gap:6px;margin-bottom:5px}
+.catf__title{
+  flex:1;min-width:0;font-size:10px;font-weight:800;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--mute);
+}
+.catf__act{
+  font-size:10px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--mute);border:1px solid var(--line);border-radius:4px;padding:2px 6px;
+}
+.catf__chips{display:flex;flex-wrap:wrap;gap:4px}
+.catchip{
+  display:inline-flex;align-items:center;gap:4px;font-size:10.5px;font-weight:700;
+  border:1px solid var(--line);border-radius:11px;padding:2px 8px;
+  color:var(--mute);background:transparent;line-height:1.5;
+}
+.catchip i{
+  font-style:normal;font-family:var(--mono);font-size:9.5px;font-weight:700;
+  opacity:.75;font-variant-numeric:tabular-nums;
+}
+.catchip.is-on{background:var(--ink);border-color:var(--ink);color:#fff}
+.catchip.is-off{text-decoration:line-through;opacity:.6}
 .guide{
-  background:var(--paper);border:1px solid var(--line);border-radius:10px;
-  padding:0 12px;margin-top:10px;box-shadow:var(--lift);
+  background:var(--paper);border:1px solid var(--line);border-radius:7px;
+  padding:0 9px;margin-top:7px;box-shadow:var(--lift);
 }
-.guide summary{padding:11px 0;font-weight:700;font-size:13px;cursor:pointer}
+.guide summary{padding:8px 0;font-weight:700;font-size:12.5px;cursor:pointer}
 .guide ol{padding-left:18px;font-size:12.5px;margin:0 0 9px}
 .guide li{margin-bottom:7px}
 .guide code{
@@ -376,7 +428,7 @@ input,select,textarea{font-family:inherit;font-size:16px}
   padding:6px 8px;border-radius:6px;word-break:break-all;flex:1;min-width:0;
 }
 .guide__p{font-size:12px;color:var(--mute);margin:7px 0 10px;line-height:1.45}
-.ladder{display:flex;gap:4px;margin:2px 0 5px}
+.ladder{display:flex;gap:3px;margin:2px 0 4px}
 .ladder__r{
   flex:1;text-align:center;font-family:var(--mono);font-size:10px;
   padding:5px 2px;border-radius:6px;background:rgba(255,255,255,.65);
@@ -387,20 +439,20 @@ input,select,textarea{font-family:inherit;font-size:16px}
 .cycle__est{font-size:11.5px;opacity:.85;line-height:1.4}
 .tag__est{font-family:var(--mono);font-size:10.5px;margin-top:6px;color:rgba(20,22,26,.75);line-height:1.4}
 .decoder{
-  display:grid;grid-template-columns:auto 1fr;gap:5px 10px;
-  background:var(--paper);border:1px solid var(--line);border-radius:10px;
-  padding:10px 12px;font-size:12.5px;line-height:1.4;box-shadow:var(--lift);
+  display:grid;grid-template-columns:auto 1fr;gap:3px 9px;
+  background:var(--paper);border:1px solid var(--line);border-radius:7px;
+  padding:7px 9px;font-size:12px;line-height:1.32;box-shadow:var(--lift);
 }
 .decoder span:nth-child(odd){font-family:var(--mono);font-weight:700}
 
 /* ---------- form ---------- */
-.field{margin-bottom:9px}
+.field{margin-bottom:6px}
 .field__l{
   display:block;font-size:10.5px;font-weight:800;letter-spacing:.12em;
   text-transform:uppercase;color:var(--mute);margin-bottom:4px;
 }
 .field__i{
-  width:100%;padding:10px 11px;border:1px solid var(--line);border-radius:9px;
+  width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:7px;
   background:var(--paper);color:var(--ink);
 }
 .field__i--mono{font-family:var(--mono)}
@@ -413,9 +465,9 @@ input,select,textarea{font-family:inherit;font-size:16px}
 .sheet.is-on{display:flex}
 .sheet__card{
   background:var(--concrete);width:100%;max-height:88vh;overflow-y:auto;
-  border-radius:14px 14px 0 0;padding:14px 13px calc(16px + env(safe-area-inset-bottom));
+  border-radius:12px 12px 0 0;padding:11px 10px calc(12px + env(safe-area-inset-bottom));
 }
-.sheet__h{font-size:15.5px;font-weight:800;margin:0 0 11px}
+.sheet__h{font-size:14.5px;font-weight:800;margin:0 0 8px}
 
 /* ---------- tab bar ---------- */
 .tabs{
@@ -426,17 +478,17 @@ input,select,textarea{font-family:inherit;font-size:16px}
 .tab{
   flex:1;height:var(--tabh);color:#83807A;display:flex;flex-direction:column;
   align-items:center;justify-content:center;gap:2px;
-  font-size:9.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;
+  font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;
 }
 .tab.is-on{color:var(--tag)}
-.tab__g{font-size:17px;line-height:1}
+.tab__g{font-size:15px;line-height:1}
 .empty{
-  text-align:center;color:var(--mute);font-size:13px;
-  padding:22px 14px;border:1px dashed var(--line);border-radius:10px;
+  text-align:center;color:var(--mute);font-size:12.5px;
+  padding:15px 12px;border:1px dashed var(--line);border-radius:7px;
 }
 .warn{
   background:var(--hold-bg);border:1px solid #E3CE93;border-left:4px solid var(--hold);
-  border-radius:9px;padding:10px 12px;font-size:12.5px;line-height:1.45;margin-bottom:10px;
+  border-radius:7px;padding:7px 9px;font-size:12px;line-height:1.38;margin-bottom:7px;
 }
 @media(prefers-reduced-motion:reduce){
   .scan__laser{animation:none;top:50%}
@@ -533,7 +585,16 @@ input,select,textarea{font-family:inherit;font-size:16px}
       <span class="scan__hint" id="pushnote" style="margin:0"></span>
     </div>
 
-    <p class="scan__hint" id="sweepsum" style="margin:8px 0"></p>
+    <div class="catf" id="catfilter" hidden>
+      <div class="catf__head">
+        <span class="catf__title">Departments <span id="catsum"></span></span>
+        <button class="catf__act" id="catall">All</button>
+        <button class="catf__act" id="catnone">None</button>
+      </div>
+      <div class="catf__chips" id="catchips"></div>
+    </div>
+
+    <p class="scan__hint" id="sweepsum" style="margin:6px 0"></p>
     <div id="sweeplist"></div>
     <div style="display:flex;gap:6px;margin-top:8px">
       <button class="btn btn--tag btn--sm" id="catbtn" style="flex:1">📖 Show clearance</button>
@@ -737,6 +798,7 @@ var ENDING_SCORE = { "":0, "06":1, "03":1, "02":2, "01":0, "penny":4 };
 
 var state = { items: [], steps: [], myStore: null,
               foundStores: [], pickedStores: [], storeHits: null,
+              hiddenCats: [],
               mode: "assess", verifyId: null };
 
 function load(){
@@ -750,6 +812,10 @@ function load(){
       state.foundStores = Array.isArray(p.foundStores) ? p.foundStores : [];
       state.pickedStores = Array.isArray(p.pickedStores) ? p.pickedStores : [];
       state.storeHits = p.storeHits || null;
+      /* Hidden rather than shown, deliberately: a department that turns up
+         in tomorrow's data is visible by default instead of silently
+         missing because it wasn't on a list written today. */
+      state.hiddenCats = Array.isArray(p.hiddenCats) ? p.hiddenCats : [];
       return;
     }
   }catch(e){ /* first run or storage blocked */ }
@@ -760,7 +826,8 @@ function load(){
 function save(){
   try{ localStorage.setItem(KEY, JSON.stringify({items:state.items, steps:state.steps,
        myStore:state.myStore,
-       foundStores:state.foundStores, pickedStores:state.pickedStores, storeHits:state.storeHits})); }
+       foundStores:state.foundStores, pickedStores:state.pickedStores, storeHits:state.storeHits,
+       hiddenCats:state.hiddenCats})); }
   catch(e){ /* private mode — app still works for this session */ }
 }
 
@@ -1410,92 +1477,155 @@ var CAT_SHORT = {
 };
 function shortCat(c){ return CAT_SHORT[c] || (c || "").slice(0, 7); }
 
+/* ---- department filter -------------------------------------------
+   Counts come from the list actually in hand (after the store filter),
+   so the number on a chip is the number of rows it will add or remove
+   -- not a figure from some wider set the user cannot see. */
+function catOf(c){ return c.cat || "Other"; }
+
+function catCounts(list){
+  var m = {};
+  list.forEach(function(c){ var k = catOf(c); m[k] = (m[k] || 0) + 1; });
+  return m;
+}
+function catHidden(cat){ return (state.hiddenCats || []).indexOf(cat) !== -1; }
+
+/* Server counts when we have them, the list in hand otherwise. */
+function catSource(list){
+  return (sweepSource === "catalog" && CATCOUNTS) ? CATCOUNTS : catCounts(list);
+}
+function hiddenTotal(list){
+  var counts = catSource(list), n = 0;
+  Object.keys(counts).forEach(function(k){ if(catHidden(k)) n += counts[k]; });
+  return n;
+}
+
+function setCatHidden(cat, off){
+  var h = (state.hiddenCats || []).slice(), i = h.indexOf(cat);
+  if(off && i === -1) h.push(cat);
+  if(!off && i !== -1) h.splice(i, 1);
+  state.hiddenCats = h;
+}
+
+function renderCatFilter(list){
+  var counts = catSource(list);
+  /* biggest pile first: the whole point is that paint is one tap away
+     from gone, without hunting for it in an alphabetical list */
+  var cats = Object.keys(counts).sort(function(a, b){
+    return counts[b] - counts[a] || a.localeCompare(b);
+  });
+  $("catfilter").hidden = cats.length < 2;
+  if(cats.length < 2) return;
+  var hid = cats.filter(catHidden).length;
+  $("catsum").textContent = hid ? "· " + hid + " of " + cats.length + " off" : "· " + cats.length;
+  $("catchips").innerHTML = cats.map(function(c){
+    var off = catHidden(c);
+    return '<button class="catchip ' + (off ? "is-off" : "is-on") +
+           '" data-cat="' + esc(c) + '" aria-pressed="' + (off ? "false" : "true") + '">' +
+           esc(c) + ' <i>' + counts[c] + '</i></button>';
+  }).join("");
+}
+
 function renderSweep(){
-  var list = sweepList;
-  $("sweepclear").hidden = !list.length;
-  if(!list.length){
-    var pk = (state.pickedStores || []).length;
-    $("sweepsum").textContent = sweepSource === "catalog" && pk
-      ? "Nothing on clearance at " + (pk === 1 ? "that store" : "those " + pk + " stores") +
-        " in the last sweep. Deselect a store to see the rest."
-      : "Tap Show clearance for every product carrying the in-store clearance tag.";
+  var all = sweepList;
+  $("sweepclear").hidden = !all.length;
+  renderCatFilter(all);
+  var hiddenN = hiddenTotal(all);
+
+  /* Sort the backing array before filtering, so the index carried on each
+     row still points at the right entry in sweepList when it is tapped. */
+  if(sweepSource !== "catalog" && all.length){
+    all.sort(function(a, b){
+      return ((b.clear ? 2 : 0) + (b.oos ? 1 : 0)) - ((a.clear ? 2 : 0) + (a.oos ? 1 : 0));
+    });
+  }
+  /* Catalog rows arrive already excluded by the server, so this pass is a
+     no-op there and does the real work for scan results. */
+  var shown = [];
+  all.forEach(function(c, i){ if(!catHidden(catOf(c))) shown.push([c, i]); });
+
+  if(!shown.length){
     $("sweeplist").innerHTML = "";
+    var pk = (state.pickedStores || []).length;
+    if(hiddenN){
+      /* Never let a filtered-empty list read as an empty shelf. "Nothing is
+         on clearance" and "you switched it all off" are different facts and
+         only one of them is worth driving somewhere for. */
+      $("sweepsum").textContent = hiddenN + " item" + (hiddenN === 1 ? " is" : "s are") +
+        " on clearance, all in departments you switched off. Tap All above to bring them back.";
+    } else {
+      $("sweepsum").textContent = sweepSource === "catalog" && pk
+        ? "Nothing on clearance at " + (pk === 1 ? "that store" : "those " + pk + " stores") +
+          " in the last sweep. Deselect a store to see the rest."
+        : "Tap Show clearance for every product carrying the in-store clearance tag.";
+    }
     return;
   }
+
+  var cut = hiddenN ? " · " + hiddenN + " hidden by department" : "";
   if(sweepSource === "catalog"){
     var picked = (state.pickedStores || []).length;
-    var fell = list.filter(function(c){ return c.drop != null; }).length;
-    /* the file ships only the deepest few thousand rows — say so rather
-       than let the count read as the whole picture */
+    var fell = shown.filter(function(x){ return x[0].drop != null; }).length;
     var total = CATALOG && CATALOG.total_hits;
     var more = (total && CATALOG.hits && total > CATALOG.hits.length)
-      ? " · best " + CATALOG.hits.length + " of " + total + " found, spread across every aisle" : "";
-    $("sweepsum").textContent = list.length + " on in-store clearance" +
+      ? " · best " + CATALOG.hits.length + " of " + total + " found" : "";
+    $("sweepsum").textContent = shown.length + " on in-store clearance" +
       (picked ? " at your " + picked + " selected store" + (picked === 1 ? "" : "s") : " across " +
-        ((CATALOG && CATALOG.stores_n) || "all") + " nearby stores") +
+        ((CATALOG && CATALOG.stores_n) || "all") + " nearby stores") + cut +
       (CATALOG && CATALOG.pool_n ? " · " + CATALOG.pool_n + " products swept" : "") + more +
       (CATALOG && CATALOG.newest ? " · checked " + timeAgo(CATALOG.newest)
         : CATALOG && CATALOG.harvested ? " · swept " + CATALOG.harvested : "") +
       (fell ? ". " + fell + " dropped overnight — those lead." : ". Deepest markdown first; empty shelves last.");
   } else {
-    var flagged = list.filter(function(c){ return c.clear || c.oos; }).length;
+    var flagged = shown.filter(function(x){ return x[0].clear || x[0].oos; }).length;
     $("sweepsum").textContent = flagged
-      ? list.length + " found · " + flagged + " carry a clearance or in-store-only signal (badged, listed first). Tap one to open it, then share it back for the full verdict."
-      : list.length + " found, but none carried a clearance signal — these are search results to check, not confirmed clearance. Tap one to open it at your store.";
+      ? shown.length + " found" + cut + " · " + flagged + " carry a clearance or in-store-only signal (badged, listed first). Tap one to open it, then share it back for the full verdict."
+      : shown.length + " found" + cut + ", but none carried a clearance signal — these are search results to check, not confirmed clearance. Tap one to open it at your store.";
   }
-  /* badged candidates first — they're the ones worth the walk.
-     Sort the backing array so row indices stay valid on tap. The
-     catalog arrives already ordered by depth with empty shelves last,
-     so leave that alone. */
-  if(sweepSource !== "catalog"){
-    sweepList.sort(function(a, b){
-      return ((b.clear ? 2 : 0) + (b.oos ? 1 : 0)) - ((a.clear ? 2 : 0) + (a.oos ? 1 : 0));
-    });
-  }
-  list = sweepList;
+
   var html = "";
-  list.forEach(function(c, i){
-    html += '<button class="storeitem" data-sweep="' + i + '" style="width:100%;text-align:left">';
+  shown.forEach(function(pair){
+    var c = pair[0], i = pair[1];
+    html += '<button class="storeitem" data-sweep="' + i + '">';
     if(c.cat) html += '<span class="cattile">' + esc(shortCat(c.cat)) + '</span>';
-    html +=   '<div style="flex:1;min-width:0"><b>' + esc(c.name.slice(0, 60)) + '</b>';
+    html +=   '<span class="storeitem__main">';
+    html +=     '<span class="storeitem__top"><b>' + esc(c.name.slice(0, 70)) + '</b>';
+    if(c.price != null) html += '<span class="storeitem__off">-' + c.pct + '%</span>';
+    else html += '<span class="storeitem__d">' + (c.clear ? "🏷️" : c.oos ? "🚫" : "·") + " ↗</span>";
+    html +=     '</span>';
+
     if(c.price != null){
-      /* stock is that store's own count, not a neighbour's — a zero
-         here means the walk is probably wasted, so it reads red */
-      var qh = "";
+      /* One wrapping line carrying every fact that used to cost a line
+         of its own. Order is what you decide on: price, then how far it
+         fell, then whether it is actually there, then where and when. */
+      var meta = ['<span class="storeitem__price">$' + c.price.toFixed(2) + '</span>'];
+      if(c.was) meta.push('<span class="storeitem__was">$' + c.was.toFixed(2) + '</span>');
+      if(c.drop != null) meta.push('<span class="fell">↓ $' + c.drop.toFixed(2) + '</span>');
+      /* stock is that store's own count, not a neighbour's -- a zero here
+         means the walk is probably wasted, so it reads red */
       if(c.qty != null){
-        qh = c.qty > 0
-          ? ' <span class="qtyok">' + c.qty + ' on shelf</span>'
-          : ' <span class="qtyno">none on shelf</span>';
+        meta.push(c.qty > 0 ? '<span class="qtyok">' + c.qty + ' left</span>'
+                            : '<span class="qtyno">none left</span>');
       }
-      html +=   '<span class="storeitem__addr"><span class="storeitem__price">$' + c.price.toFixed(2) +
-                '</span> <span class="storeitem__was">was $' + (c.was || 0).toFixed(2) +
-                (c.oos ? " · store only" : "") +
-                (c.sup ? " · being replaced" : "") + '</span>' + qh;
-      /* still falling — the cascade is what ends at a penny */
-      if(c.drop != null){
-        html += '<span class="fell">↓ $' + c.drop.toFixed(2) + ' → $' + c.price.toFixed(2) + ' overnight</span>';
-      }
-      /* the clearance price is that store's only — say which, loudly */
-      if(c.store){
-        /* A clearance price belongs to one building AND one moment -- the
-           store without the time is half the fact, and markdowns cascade
-           daily. Shown together for that reason. */
-        html += '<span class="atstore">@ ' + esc(storeName(c.store)) +
-                (c.seen ? ' <span class="seen">· checked ' + timeAgo(c.seen) + '</span>' : '') +
-                '</span>';
-      }
+      if(c.oos) meta.push('<span class="storeitem__flag">store only</span>');
+      if(c.sup) meta.push('<span class="storeitem__flag">replaced</span>');
+      /* A clearance price belongs to one building AND one moment -- the
+         store without the time is half the fact, and markdowns cascade
+         daily. Shown together for that reason. */
+      if(c.store) meta.push('<span class="atstore">' + esc(storeName(c.store)) + '</span>');
+      if(c.seen) meta.push('<span class="seen">' + timeAgo(c.seen) + '</span>');
+      html += '<span class="storeitem__meta">' + meta.join("") + '</span>';
+
       var ids = [];
       if(c.sku) ids.push("SKU " + c.sku);
       if(c.upc) ids.push("UPC " + c.upc);
       if(ids.length) html += '<span class="idline">' + esc(ids.join("  ·  ")) + '</span>';
-      html +=   '</span></div>';
-      html +=   '<span class="storeitem__off">-' + c.pct + '%</span>';
     } else {
-      var badge = c.clear ? "🏷️" : c.oos ? "🚫" : "·";
-      html +=     '<span class="storeitem__addr">' + (c.clear ? "clearance signal · " : c.oos ? "online-unavailable · " : "") + "#" + esc(c.id) + '</span></div>';
-      html +=   '<span class="storeitem__d">' + badge + " ↗</span>";
+      html += '<span class="storeitem__addr">' +
+              (c.clear ? "clearance signal · " : c.oos ? "online-unavailable · " : "") +
+              "#" + esc(c.id) + '</span>';
     }
-    html += '</button>';
+    html +=   '</span></button>';
   });
   $("sweeplist").innerHTML = html;
 }
@@ -1514,6 +1644,11 @@ function showSweep(list){
    to check, not confirmed markdowns.
    ============================================================ */
 var CATALOG = null;
+
+/* department -> true row count across the picked stores, straight from the
+   server and independent of the row limit. Null when the rows came from the
+   bundled file, which cannot report counts it does not have. */
+var CATCOUNTS = null;
 
 /* ============================================================
    ON-DEMAND AREA CHECK
@@ -1752,18 +1887,36 @@ function loadFromApi(){
    the droplet -- so the copy the droplet serves is whatever setup.sh seeded and
    never changes. The database behind /api is current; the file can be days old. */
 function fileCatalog(){
+  /* the file carries no department counts, so the chips fall back to
+     counting the rows in hand -- which for a file is all of them */
+  CATCOUNTS = null;
   return fetch("clearance.json").then(function(r){ return r.json(); })
     .then(function(d){ CATALOG = d; buildCatIndex(d); return d; });
 }
 
 function apiCatalog(picked){
+  /* The exclusion goes to the server, not applied here. Paint is ~85% of a
+     store's clearance AND the deepest-discounted, so it owns the top of the
+     ordering: filtering a 400-row page locally left 7 non-paint rows out of
+     the ~105 that existed. Spending the row budget after the exclusion is
+     what makes this a filter rather than the look of one. */
+  var drop = (state.hiddenCats || []).join(",");
+  var q = "?limit=400" + (drop ? "&exclude=" + encodeURIComponent(drop) : "");
   return Promise.all(picked.map(function(id){
-    return apiJSON("/store/" + encodeURIComponent(id) + "/clearance?limit=400")
-             .then(function(list){ return { id: id, list: list || [] }; })
-             .catch(function(){ return { id: id, list: [] }; });
+    return Promise.all([
+      apiJSON("/store/" + encodeURIComponent(id) + "/clearance" + q)
+        .catch(function(){ return []; }),
+      /* counts are deliberately unfiltered and limit-free -- a chip has to
+         say what the store holds, not what one page happened to contain */
+      apiJSON("/store/" + encodeURIComponent(id) + "/categories")
+        .catch(function(){ return []; })
+    ]).then(function(r){ return { id: id, list: r[0] || [], cats: r[1] || [] }; });
   })).then(function(results){
-    var rows = [];
+    var rows = [], counts = {};
     results.forEach(function(res){
+      res.cats.forEach(function(c){
+        counts[c.category] = (counts[c.category] || 0) + Number(c.n);
+      });
       res.list.forEach(function(r){
         /* into the same 15-field shape the rest of the app speaks, so nothing
            downstream needs to know where the row came from.
@@ -1783,13 +1936,21 @@ function apiCatalog(picked){
                    r.observed_at || null]);
       });
     });
-    if(!rows.length) return null;
+    CATCOUNTS = Object.keys(counts).length ? counts : null;
+    /* No rows can mean "nothing on clearance" or "you switched every
+       department off" -- only the counts can tell those apart, so bail to
+       the bundled file only when there is genuinely nothing there. */
+    if(!rows.length && !CATCOUNTS) return null;
     var newest = 0;
     rows.forEach(function(r){
       var t = r[15] ? Date.parse(r[15]) : 0;
       if(t > newest) newest = t;
     });
-    var d = { hits: rows, total_hits: rows.length, stores_n: picked.length,
+    /* total is what matches the CURRENT filter, so "best 400 of 724" counts
+       the rows the user could actually reach by scrolling */
+    var total = 0;
+    Object.keys(counts).forEach(function(k){ if(!catHidden(k)) total += counts[k]; });
+    var d = { hits: rows, total_hits: total || rows.length, stores_n: picked.length,
               newest: newest || null };
     CATALOG = d; buildCatIndex(d);
     return d;
@@ -2458,6 +2619,32 @@ $("sweeplist").addEventListener("click", function(e){
 });
 $("sweepclear").addEventListener("click", function(){
   sweepList = []; renderSweep();
+});
+
+/* The server does the excluding, so a changed selection means a refetch --
+   re-rendering the rows already in hand would just re-filter a page that was
+   chosen under the OLD exclusion. Scan results have no server behind them
+   and only need the repaint. */
+function catChanged(){
+  save();
+  if(sweepSource === "catalog" && (state.pickedStores || []).length) loadFromApi();
+  else renderSweep();
+}
+$("catchips").addEventListener("click", function(e){
+  var b = e.target.closest("[data-cat]");
+  if(!b) return;
+  var cat = b.getAttribute("data-cat");
+  setCatHidden(cat, !catHidden(cat));
+  catChanged();
+});
+$("catall").addEventListener("click", function(){
+  state.hiddenCats = []; catChanged();
+});
+$("catnone").addEventListener("click", function(){
+  /* Only departments we can currently see -- switching off one that is not
+     on screen would be a setting with no way back to it. */
+  state.hiddenCats = Object.keys(catSource(sweepList));
+  catChanged();
 });
 
 $("zipgo").addEventListener("click", function(){
