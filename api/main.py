@@ -57,9 +57,46 @@ def _excluded(exclude: str) -> list:
     return [c.strip() for c in (exclude or "").split(",") if c.strip()][:80]
 
 
+# Ordering has to be server-side for the same reason the department filter
+# is: the app fetches a page, and a page is chosen by whatever the server
+# ordered by. Sorting that page in the browser sorts the wrong 400 rows --
+# "the cheapest of the 400 deepest markdowns" is not "the cheapest".
+#
+# Whitelisted, never interpolated from the request. `dir` picks a clause
+# from this table; it never reaches the query as text.
+_ORDER = {
+    "best": {
+        # The curated walk: shelves we know are empty sink, then deepest cut.
+        # `coalesce(quantity, 1)` keeps unknown stock in the running -- we
+        # have no count for it, which is not the same as knowing it is gone.
+        "desc": "(coalesce(l.quantity, 1) = 0), c.penny_score desc nulls last, l.pct_off desc",
+        "asc":  "(coalesce(l.quantity, 1) = 0), c.penny_score desc nulls last, l.pct_off asc",
+    },
+    "pct":   {"desc": "l.pct_off desc nulls last", "asc": "l.pct_off asc nulls last"},
+    "price": {"desc": "l.clearance_price desc nulls last",
+              "asc":  "l.clearance_price asc nulls last"},
+    "qty":   {"desc": "l.quantity desc nulls last", "asc": "l.quantity asc nulls last"},
+    "seen":  {"desc": "l.observed_at desc nulls last", "asc": "l.observed_at asc nulls last"},
+}
+
+
+def _order_by(sort: str, direction: str) -> str:
+    """An unknown sort or direction falls back to the default rather than
+    erroring: a stale bookmark should show the list, not a 422."""
+    by = _ORDER.get(sort, _ORDER["best"])
+    clause = by.get(direction, by["desc"])
+    # item_id last, always. Without a total order, rows with equal pct_off
+    # come back in whatever order the plan produced, so which ones survive
+    # `limit` changes between two identical requests -- and the app would
+    # show a different 400 each time it refetched.
+    return clause + ", l.item_id"
+
+
 @app.get(V + "/store/{store_id}/clearance")
 def store_clearance(store_id: str, limit: int = Query(200, le=1000),
-                    min_pct: float = 0, exclude: str = ""):
+                    min_pct: float = 0, exclude: str = "",
+                    sort: str = "best", dir: str = "desc",
+                    min_qty: int = Query(0, ge=0)):
     """Rows ordered deepest-first, minus any departments the caller excludes.
 
     The exclusion has to happen HERE, not in the app. A typical store is
@@ -81,19 +118,30 @@ def store_clearance(store_id: str, limit: int = Query(200, le=1000),
             " where l.store_id = %s and l.clearance_price is not null "
             "   and coalesce(l.pct_off, 0) >= %s "
             "   and coalesce(p.category, 'Other') <> all(%s) "
-            " order by c.penny_score desc nulls last, l.pct_off desc limit %s",
-            (store_id, min_pct, _excluded(exclude), limit))
+            # A stock floor of 1 means "on the shelf", and an unknown count
+            # is not evidence of that -- 845 of ~22,000 rows have no count
+            # at all. They are excluded here rather than assumed present,
+            # because the whole value of this number is deciding whether the
+            # drive is wasted.
+            "   and (%s = 0 or l.quantity >= %s) "
+            f" order by {_order_by(sort, dir)} limit %s",
+            (store_id, min_pct, _excluded(exclude), min_qty, min_qty, limit))
         return cur.fetchall()
 
 
 @app.get(V + "/store/{store_id}/categories")
-def store_categories(store_id: str, min_pct: float = 0):
+def store_categories(store_id: str, min_pct: float = 0,
+                     min_qty: int = Query(0, ge=0)):
     """Every department at this store with its true row count.
 
     Deliberately independent of `limit`: the chips in the app must count
     what the store has, not what one page of results happened to contain,
     or switching a department off would promise rows that were never
     fetched -- and switching it on would appear to lose some.
+
+    It does honour `min_qty`, though, for the same reason: with a stock
+    floor on, a chip reading "Tools 18" when only 15 are actually on a
+    shelf is the same lie pointing the other way.
     """
     with rows() as cur:
         cur.execute(
@@ -102,8 +150,9 @@ def store_categories(store_id: str, min_pct: float = 0):
             "  from latest l join product p using (item_id) "
             " where l.store_id = %s and l.clearance_price is not null "
             "   and coalesce(l.pct_off, 0) >= %s "
+            "   and (%s = 0 or l.quantity >= %s) "
             " group by 1 order by n desc, category",
-            (store_id, min_pct))
+            (store_id, min_pct, min_qty, min_qty))
         return cur.fetchall()
 
 

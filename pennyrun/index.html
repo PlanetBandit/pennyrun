@@ -386,6 +386,31 @@ input,select,textarea{font-family:inherit;font-size:16px}
   background:var(--stop);color:#fff;border-radius:4px;padding:1px 4px;
 }
 
+/* ---------- list controls ----------
+   Sort key, direction and a stock floor. Same chip language as the
+   department filter below so the three read as one control surface. */
+.ctl{
+  background:var(--paper);border:1px solid var(--line);border-radius:7px;
+  padding:5px 8px;margin-bottom:6px;box-shadow:var(--lift);
+}
+.ctl__row{display:flex;align-items:center;gap:6px;padding:2px 0}
+.ctl__row + .ctl__row{border-top:1px solid var(--line);margin-top:3px;padding-top:5px}
+.ctl__l{
+  flex:none;width:52px;font-size:10px;font-weight:800;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--mute);
+}
+.ctl__grp{display:flex;flex-wrap:wrap;gap:4px;flex:1;min-width:0}
+.ctlb{
+  font-size:10.5px;font-weight:700;border:1px solid var(--line);border-radius:11px;
+  padding:2px 8px;color:var(--mute);background:transparent;line-height:1.5;
+}
+.ctlb.is-on{background:var(--ink);border-color:var(--ink);color:#fff}
+.ctl__dir{
+  flex:none;width:26px;height:22px;border:1px solid var(--line);border-radius:5px;
+  font-size:12px;font-weight:800;color:var(--ink);background:var(--paper);
+  display:flex;align-items:center;justify-content:center;
+}
+
 /* ---------- department filter ----------
    Roughly 85% of a store's clearance is paint. Somebody hunting tools
    should not have to scroll past six hundred gallons of it to find
@@ -583,6 +608,29 @@ input,select,textarea{font-family:inherit;font-size:16px}
     <div id="pushrow" hidden style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
       <button class="btn btn--ghost btn--sm" id="pushbtn">🔔 Notify me when checks finish</button>
       <span class="scan__hint" id="pushnote" style="margin:0"></span>
+    </div>
+
+    <div class="ctl" id="listctl" hidden>
+      <div class="ctl__row">
+        <span class="ctl__l">Sort</span>
+        <div class="ctl__grp" id="sortkeys">
+          <button class="ctlb is-on" data-sort="best">Best</button>
+          <button class="ctlb" data-sort="pct">% off</button>
+          <button class="ctlb" data-sort="price">Price</button>
+          <button class="ctlb" data-sort="qty">Stock</button>
+          <button class="ctlb" data-sort="seen">Checked</button>
+        </div>
+        <button class="ctl__dir" id="sortdir" aria-label="Reverse the order">↓</button>
+      </div>
+      <div class="ctl__row">
+        <span class="ctl__l">On shelf</span>
+        <div class="ctl__grp" id="qtychips">
+          <button class="ctlb is-on" data-q="0">Any</button>
+          <button class="ctlb" data-q="1">1+</button>
+          <button class="ctlb" data-q="3">3+</button>
+          <button class="ctlb" data-q="10">10+</button>
+        </div>
+      </div>
     </div>
 
     <div class="catf" id="catfilter" hidden>
@@ -796,9 +844,14 @@ var CLUES = [
 
 var ENDING_SCORE = { "":0, "06":1, "03":1, "02":2, "01":0, "penny":4 };
 
+/* Whitelists, so a hand-edited localStorage cannot put a value in the
+   query string that the server would only fall back on anyway. */
+var SORT_KEYS = ["best", "pct", "price", "qty", "seen"];
+var QTY_STEPS = [0, 1, 3, 10];
+
 var state = { items: [], steps: [], myStore: null,
               foundStores: [], pickedStores: [], storeHits: null,
-              hiddenCats: [],
+              hiddenCats: [], sortKey: "best", sortDir: "desc", minQty: 0,
               mode: "assess", verifyId: null };
 
 function load(){
@@ -816,6 +869,9 @@ function load(){
          in tomorrow's data is visible by default instead of silently
          missing because it wasn't on a list written today. */
       state.hiddenCats = Array.isArray(p.hiddenCats) ? p.hiddenCats : [];
+      state.sortKey = SORT_KEYS.indexOf(p.sortKey) !== -1 ? p.sortKey : "best";
+      state.sortDir = p.sortDir === "asc" ? "asc" : "desc";
+      state.minQty = QTY_STEPS.indexOf(+p.minQty) !== -1 ? +p.minQty : 0;
       return;
     }
   }catch(e){ /* first run or storage blocked */ }
@@ -827,7 +883,8 @@ function save(){
   try{ localStorage.setItem(KEY, JSON.stringify({items:state.items, steps:state.steps,
        myStore:state.myStore,
        foundStores:state.foundStores, pickedStores:state.pickedStores, storeHits:state.storeHits,
-       hiddenCats:state.hiddenCats})); }
+       hiddenCats:state.hiddenCats, sortKey:state.sortKey,
+       sortDir:state.sortDir, minQty:state.minQty})); }
   catch(e){ /* private mode — app still works for this session */ }
 }
 
@@ -1480,11 +1537,76 @@ var CAT_SHORT = {
 };
 function shortCat(c){ return CAT_SHORT[c] || (c || "").slice(0, 7); }
 
+/* ---- sort + stock floor -------------------------------------------
+   The server does both for API rows, before it spends the row limit --
+   sorting a fetched page in the browser sorts the wrong 400. These run
+   anyway: they are what orders the bundled file, which has no server
+   behind it, and on API rows they reproduce the order rather than
+   change it. */
+function qtyPasses(c){
+  var min = state.minQty || 0;
+  if(!min) return true;
+  /* An unknown count is not evidence of stock. The whole value of this
+     number is deciding whether the drive is wasted, so "we don't know"
+     cannot pass a filter that means "it is on the shelf". */
+  return c.qty != null && c.qty >= min;
+}
+
+function sortValue(c, key){
+  return key === "price" ? c.price
+       : key === "pct"   ? c.pct
+       : key === "qty"   ? c.qty
+       : key === "seen"  ? c.seen
+       : null;
+}
+
+function sortRows(list){
+  var key = state.sortKey || "best";
+  var asc = state.sortDir === "asc";
+  var dir = asc ? 1 : -1;
+  return list.slice().sort(function(a, b){
+    if(key === "best"){
+      /* the curated walk, matching _ORDER["best"] on the server: a shelf we
+         know is empty sinks, then a price still falling leads, then the
+         deepest cut. Unknown stock stays in the running -- no count is not
+         the same as no stock. */
+      var az = a.qty === 0 ? 1 : 0, bz = b.qty === 0 ? 1 : 0;
+      if(az !== bz) return az - bz;
+      var ad = a.drop != null ? 0 : 1, bd = b.drop != null ? 0 : 1;
+      if(ad !== bd) return ad - bd;
+      return asc ? a.pct - b.pct : b.pct - a.pct;
+    }
+    var av = sortValue(a, key), bv = sortValue(b, key);
+    /* unknown sinks in BOTH directions: it is not a small number, and it is
+       not a large one either */
+    if(av == null && bv == null) return 0;
+    if(av == null) return 1;
+    if(bv == null) return -1;
+    if(av === bv) return String(a.id).localeCompare(String(b.id));
+    return av < bv ? -dir : dir;
+  });
+}
+
+function renderListCtl(){
+  var key = state.sortKey || "best";
+  [].forEach.call($("sortkeys").children, function(b){
+    b.classList.toggle("is-on", b.getAttribute("data-sort") === key);
+  });
+  $("sortdir").textContent = state.sortDir === "asc" ? "↑" : "↓";
+  $("sortdir").title = state.sortDir === "asc" ? "Lowest first — tap for highest"
+                                               : "Highest first — tap for lowest";
+  [].forEach.call($("qtychips").children, function(b){
+    b.classList.toggle("is-on", +b.getAttribute("data-q") === (state.minQty || 0));
+  });
+}
+
 /* ---- department filter -------------------------------------------
    Counts come from the list actually in hand (after the store filter),
    so the number on a chip is the number of rows it will add or remove
    -- not a figure from some wider set the user cannot see. */
 function catOf(c){ return c.cat || "Other"; }
+
+var SORT_LABEL = { pct: "discount", price: "price", qty: "stock", seen: "when checked" };
 
 function catCounts(list){
   var m = {};
@@ -1532,6 +1654,8 @@ function renderCatFilter(list){
 function renderSweep(){
   var all = sweepList;
   $("sweepclear").hidden = !all.length;
+  $("listctl").hidden = !all.length && !state.minQty && !(state.hiddenCats || []).length;
+  renderListCtl();
   renderCatFilter(all);
   var hiddenN = hiddenTotal(all);
 
@@ -1556,6 +1680,12 @@ function renderSweep(){
          only one of them is worth driving somewhere for. */
       $("sweepsum").textContent = hiddenN + " item" + (hiddenN === 1 ? " is" : "s are") +
         " on clearance, all in departments you switched off. Tap All above to bring them back.";
+    } else if(state.minQty){
+      /* the third kind of empty: there ARE markdowns, just none with that
+         much left on the shelf */
+      $("sweepsum").textContent = "Nothing with " + state.minQty +
+        " or more on the shelf. Set On shelf back to Any to see the rest — " +
+        "some items carry no stock count at all, and those never pass a floor.";
     } else {
       $("sweepsum").textContent = sweepSource === "catalog" && pk
         ? "Nothing on clearance at " + (pk === 1 ? "that store" : "those " + pk + " stores") +
@@ -1565,7 +1695,11 @@ function renderSweep(){
     return;
   }
 
-  var cut = hiddenN ? " · " + hiddenN + " hidden by department" : "";
+  var cut = (hiddenN ? " · " + hiddenN + " hidden by department" : "") +
+            (state.minQty ? " · " + state.minQty + "+ on shelf only" : "") +
+            (state.sortKey && state.sortKey !== "best"
+              ? " · by " + SORT_LABEL[state.sortKey] +
+                (state.sortDir === "asc" ? " ↑" : " ↓") : "");
   if(sweepSource === "catalog"){
     var picked = (state.pickedStores || []).length;
     var fell = shown.filter(function(x){ return x[0].drop != null; }).length;
@@ -1904,14 +2038,20 @@ function apiCatalog(picked){
      the ~105 that existed. Spending the row budget after the exclusion is
      what makes this a filter rather than the look of one. */
   var drop = (state.hiddenCats || []).join(",");
-  var q = "?limit=400" + (drop ? "&exclude=" + encodeURIComponent(drop) : "");
+  var floor = state.minQty ? "&min_qty=" + encodeURIComponent(state.minQty) : "";
+  var q = "?limit=400" + (drop ? "&exclude=" + encodeURIComponent(drop) : "") +
+          "&sort=" + encodeURIComponent(state.sortKey || "best") +
+          "&dir=" + encodeURIComponent(state.sortDir || "desc") + floor;
   return Promise.all(picked.map(function(id){
     return Promise.all([
       apiJSON("/store/" + encodeURIComponent(id) + "/clearance" + q)
         .catch(function(){ return []; }),
-      /* counts are deliberately unfiltered and limit-free -- a chip has to
-         say what the store holds, not what one page happened to contain */
-      apiJSON("/store/" + encodeURIComponent(id) + "/categories")
+      /* counts stay limit-free and department-blind -- a chip has to say
+         what the store holds, not what one page happened to contain. The
+         stock floor DOES apply, or a chip promises rows the list will not
+         show. */
+      apiJSON("/store/" + encodeURIComponent(id) + "/categories?min_qty=" +
+              encodeURIComponent(state.minQty || 0))
         .catch(function(){ return []; })
     ]).then(function(r){ return { id: id, list: r[0] || [], cats: r[1] || [] }; });
   })).then(function(results){
@@ -1992,16 +2132,12 @@ function showCatalog(){
                drop: (r[14] == null ? null : r[14]),
                seen: r[15] ? Date.parse(r[15]) : null };
     });
-    /* A price that fell last night is a markdown still in motion, and that
-       beats a deeper cut that has sat still for a week. Empty shelves sink
-       to the bottom either way — a wasted walk is a wasted walk. */
-    sweepList.sort(function(a, b){
-      var az = a.qty === 0 ? 1 : 0, bz = b.qty === 0 ? 1 : 0;
-      if(az !== bz) return az - bz;
-      var ad = a.drop != null ? 0 : 1, bd = b.drop != null ? 0 : 1;
-      if(ad !== bd) return ad - bd;
-      return b.pct - a.pct;
-    });
+    /* The order that used to be hardcoded here is now the "Best" option:
+       a price that fell last night is a markdown still in motion and beats
+       a deeper cut that has sat still for a week, and empty shelves sink
+       either way — a wasted walk is a wasted walk. The stock floor runs
+       here too, for the bundled file that has no server to apply it. */
+    sweepList = sortRows(sweepList.filter(qtyPasses));
     sweepSource = "catalog";
     renderSweep();
     go("checked");
@@ -2624,15 +2760,36 @@ $("sweepclear").addEventListener("click", function(){
   sweepList = []; renderSweep();
 });
 
-/* The server does the excluding, so a changed selection means a refetch --
-   re-rendering the rows already in hand would just re-filter a page that was
-   chosen under the OLD exclusion. Scan results have no server behind them
-   and only need the repaint. */
+/* The server does the excluding, the ordering and the stock floor, so any
+   change to them means a refetch — re-rendering the rows already in hand
+   would just re-sort a page that was chosen under the OLD settings, which is
+   the exact "cheapest of the 400 deepest" mistake this all exists to avoid.
+   Scan results have no server behind them and only need a repaint. */
 function catChanged(){
   save();
   if(sweepSource === "catalog" && (state.pickedStores || []).length) loadFromApi();
   else renderSweep();
 }
+$("sortkeys").addEventListener("click", function(e){
+  var b = e.target.closest("[data-sort]");
+  if(!b) return;
+  var k = b.getAttribute("data-sort");
+  if(SORT_KEYS.indexOf(k) === -1 || k === state.sortKey) return;
+  state.sortKey = k;
+  catChanged();
+});
+$("sortdir").addEventListener("click", function(){
+  state.sortDir = state.sortDir === "asc" ? "desc" : "asc";
+  catChanged();
+});
+$("qtychips").addEventListener("click", function(e){
+  var b = e.target.closest("[data-q]");
+  if(!b) return;
+  var n = +b.getAttribute("data-q");
+  if(QTY_STEPS.indexOf(n) === -1 || n === (state.minQty || 0)) return;
+  state.minQty = n;
+  catChanged();
+});
 $("catchips").addEventListener("click", function(e){
   var b = e.target.closest("[data-cat]");
   if(!b) return;
