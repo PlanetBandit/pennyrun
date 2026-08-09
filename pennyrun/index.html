@@ -1684,8 +1684,9 @@ function renderSweep(){
       /* the third kind of empty: there ARE markdowns, just none with that
          much left on the shelf */
       $("sweepsum").textContent = "Nothing with " + state.minQty +
-        " or more on the shelf. Set On shelf back to Any to see the rest — " +
-        "some items carry no stock count at all, and those never pass a floor.";
+        " or more on the shelf. Home Depot only reports a shelf count for " +
+        "items it offers for in-store pickup, and most clearance is not — " +
+        "set On shelf back to Any to see the rest.";
     } else {
       $("sweepsum").textContent = sweepSource === "catalog" && pk
         ? "Nothing on clearance at " + (pk === 1 ? "that store" : "those " + pk + " stores") +
@@ -1695,7 +1696,17 @@ function renderSweep(){
     return;
   }
 
-  var cut = (hiddenN ? " · " + hiddenN + " hidden by department" : "") +
+  /* Home Depot only reports a shelf count for items it offers for in-store
+     pickup, and clearance items mostly are not -- about 7% of a sweep comes
+     back with a real number. Say so where the control is, so tapping "1+"
+     is an informed choice rather than an ambush that empties the list. */
+  var known = 0;
+  shown.forEach(function(x){ if(x[0].qty != null) known++; });
+  var stockNote = (!state.minQty && shown.length && known < shown.length / 2)
+    ? " · shelf count known for " + known + " of " + shown.length : "";
+
+  var cut = stockNote +
+            (hiddenN ? " · " + hiddenN + " hidden by department" : "") +
             (state.minQty ? " · " + state.minQty + "+ on shelf only" : "") +
             (state.sortKey && state.sortKey !== "best"
               ? " · by " + SORT_LABEL[state.sortKey] +
