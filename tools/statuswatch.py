@@ -41,26 +41,28 @@ case when o.clearance_price is not null then 'PRICED'
      else coalesce(o.anchor_status, 'NA') end
 """
 
-# One row per item, store and run, with the state it was in the time before.
+# One row per item, store and run, paired with the state it was in the run
+# before. Deliberately consecutive OBSERVATIONS, not calendar days: the
+# database is UTC and the sweep fires at 05:10 local, so a run and the one
+# before it can land either side of a UTC midnight or share one -- grouping
+# by day silently merged two runs into one and reported no changes at all.
+# The elapsed gap is carried so a three-hour comparison is never read as a
+# day-over-day one.
 MOVES = f"""
 with seen as (
-  select o.item_id, o.store_id, o.observed_at, {STATE} as state,
-         date_trunc('day', o.observed_at) as day
+  select o.item_id, o.store_id, o.observed_at, {STATE} as state
     from observation o
    where o.trusted
 ),
-daily as (
-  select distinct on (item_id, store_id, day)
-         item_id, store_id, day, state
-    from seen
-   order by item_id, store_id, day, observed_at desc
-),
 moved as (
-  select item_id, store_id, day, state,
-         lag(state) over (partition by item_id, store_id order by day) as was
-    from daily
+  select item_id, store_id, observed_at, state,
+         lag(state)       over w as was,
+         lag(observed_at) over w as was_at
+    from seen
+  window w as (partition by item_id, store_id order by observed_at)
 )
-select was, state, count(*) as n
+select was, state, count(*) as n,
+       round(avg(extract(epoch from (observed_at - was_at)) / 3600.0)::numeric, 1) as hours
   from moved
  where was is not null and was <> state
  group by 1, 2
@@ -86,11 +88,6 @@ def main():
         for d in days:
             print("  %s  priced %6d   unpriced %6d" % (d["day"], d["priced"], d["unpriced"]))
 
-        if len(days) < 2:
-            print("\nOnly one day of history so far — transitions need at least two.")
-            print("Come back after the next nightly sweep.")
-            return
-
         cur.execute(MOVES)
         moves = cur.fetchall()
 
@@ -98,11 +95,12 @@ def main():
         print("\nNo state changes yet.")
         return
 
-    print("\nstate changes, same item at the same store, day over day:")
+    print("\nstate changes, same item at the same store, run over run:")
     to_priced = [m for m in moves if m["state"] == "PRICED"]
     for m in moves:
         mark = "   <-- a markdown appeared" if m["state"] == "PRICED" else ""
-        print("  %-9s -> %-9s %6d%s" % (m["was"], m["state"], m["n"], mark))
+        print("  %-9s -> %-9s %6d   avg %sh apart%s"
+              % (m["was"], m["state"], m["n"], m["hours"], mark))
 
     if to_priced:
         print("\nwhich states turn into a markdown, and how often:")
