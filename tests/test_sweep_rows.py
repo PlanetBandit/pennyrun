@@ -147,3 +147,55 @@ def test_against_a_real_captured_payload():
     assert boss["type"] == "boss" and loc["type"] == "online"
     assert loc["locationId"] == "2565" and loc["isAnchor"] is True, \
         "id and anchor both look like ours -- only the types differ"
+
+
+# ---------------------------------------------------------------------------
+# The store's own clearance status. Redundant as a detector -- it agreed with
+# `pricing.clearance` on 191 of 192 measured pairs -- but the disagreement is
+# an item the store calls clearance while showing full price, which produces
+# no row at all today.
+# ---------------------------------------------------------------------------
+
+def _priced(status, clearance):
+    p = {"itemId": "1", "fulfillment": {"anchorStoreStatusType": status}}
+    if clearance is not None:
+        p["pricing"] = {"value": 335.0, "clearance": {"value": clearance}}
+    else:
+        p["pricing"] = {"value": 335.0, "clearance": None}
+    return p
+
+
+def test_flagged_clearance_without_a_price_is_the_lead():
+    """Real case: item 204932008, a 5 gal. paint. $33 clearance at store
+    2565; at 2504 the same item shows $335 with no clearance block, and
+    only the store status gives it away."""
+    assert sweep.flagged_unpriced(_priced("CLEARANCE", None), "2504") is True
+
+
+def test_a_normal_clearance_hit_is_not_a_lead():
+    assert sweep.flagged_unpriced(_priced("CLEARANCE", 33.0), "2565") is False
+
+
+def test_active_and_inactive_items_are_not_leads():
+    for status in ("ACTIVE", "INACTIVE", None, ""):
+        assert sweep.flagged_unpriced(_priced(status, None), "2504") is False
+
+
+def test_status_case_does_not_decide_it():
+    assert sweep.flagged_unpriced(_priced("clearance", None), "2504") is True
+
+
+def test_a_missing_fulfillment_block_is_not_a_lead():
+    assert sweep.flagged_unpriced({"itemId": "1"}, "2504") is False
+    assert sweep.flagged_unpriced({"itemId": "1", "fulfillment": None}, "2504") is False
+
+
+def test_counting_leads_does_not_change_which_rows_are_produced():
+    """The counter rides alongside row() and must not add, drop or alter a
+    single row -- it is measurement, not a feature."""
+    import json
+    p = json.loads((FIX / "products_ok.json").read_text())["data"]["products"][0]
+    before = len(sweep._FLAGGED_UNPRICED)
+    r = sweep.row(p, "2502", {}, {})
+    assert r is not None and r[1] == "204767783"
+    assert len(sweep._FLAGGED_UNPRICED) == before, "row() must stay side-effect free"

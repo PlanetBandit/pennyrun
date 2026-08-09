@@ -27,7 +27,8 @@ _FULL = ('query q($ids: [String!]!) { products(itemIds: $ids) { itemId '
          'availabilityType { type } info { replacementOMSID } '
          'pricing(storeId: "%(s)s", isBrandPricingPolicyCompliant: false) '
          '{ value clearance { value dollarOff percentageOff } } '
-         'fulfillment(storeId: "%(s)s") { fulfillmentOptions { type fulfillable '
+         'fulfillment(storeId: "%(s)s") { anchorStoreStatusType '
+         'fulfillmentOptions { type fulfillable '
          'services { type locations { locationId isAnchor type '
          'inventory { quantity } } } } } } }')
 

@@ -508,11 +508,44 @@ def chunks_for(n):
     return -(-n // BATCH)
 
 
+# Home Depot's own store status for the item, alongside the price. Measured
+# over 192 item x store pairs it agreed with `pricing.clearance` 191 times,
+# so it is worthless as a second clearance detector -- we already read the
+# price. The 192nd is the interesting one: a 5 gal. paint flagged CLEARANCE
+# at store 2504 with no clearance price and $335 on the shelf, while the
+# same item was $33 at 2565. Those pairs produce no row at all today.
+#
+# One sample is not a rate. This counter rides on requests the sweep already
+# makes -- the field costs nothing extra -- so a night's run measures it
+# across ~10,000 pairs instead of 192, and the number decides whether
+# capturing them is worth a schema change.
+_FLAGGED_UNPRICED = []
+
+
+def flagged_unpriced(p, sid):
+    """Store says CLEARANCE, pricing block has no clearance price."""
+    f = (p.get("fulfillment") or {})
+    if (f.get("anchorStoreStatusType") or "").upper() != "CLEARANCE":
+        return False
+    cl = (p.get("pricing") or {}).get("clearance")
+    return not cl or cl.get("value") is None
+
+
+def _rows_from(chunk, sid, meta, before):
+    out = []
+    for p in call(chunk, sid):
+        if flagged_unpriced(p, sid):
+            _FLAGGED_UNPRICED.append((p.get("itemId"), sid))
+        r = row(p, sid, meta, before)
+        if r:
+            out.append(r)
+    return out
+
+
 def price_at(sid, name, ids, meta, before, note=""):
     """Price `ids` at one store. Returns (rows, refusal_rate)."""
     s0 = time.time()
-    run = in_batches(ids, lambda chunk, s=sid:
-                     [r for r in (row(p, s, meta, before) for p in call(chunk, s)) if r])
+    run = in_batches(ids, lambda chunk, s=sid: _rows_from(chunk, s, meta, before))
     # Refused and unreachable are deliberately NOT summed. "They said no" is
     # evidence about this address; "we never got an answer" is evidence about
     # our own network, and a thirty-second DHCP blip must not be read as Home
@@ -664,6 +697,17 @@ def scan():
     say("scan: %d hits across %d of %d stores in %.1f min (%d dropped since the last sweep)"
         % (len(hits), covered, len(stores), (time.time() - t0) / 60,
            sum(1 for r in hits if r[14] is not None)))
+
+    # Measured, not acted on. Capturing these would mean rows in `observation`
+    # with no clearance price -- a real change to what that table means -- and
+    # that is worth a number first.
+    if _FLAGGED_UNPRICED:
+        pairs = len(hits) + len(_FLAGGED_UNPRICED)
+        say("scan: %d item x store pairs are flagged CLEARANCE by the store with no "
+            "clearance price (%.2f%% of priced pairs) — not recorded"
+            % (len(_FLAGGED_UNPRICED), 100.0 * len(_FLAGGED_UNPRICED) / max(pairs, 1)))
+        for iid, sid in _FLAGGED_UNPRICED[:5]:
+            say("        %s @ %s" % (iid, sid))
 
     # clearance.json is already written above -- collection succeeding and
     # delivery to the droplet succeeding are different events, so an upload
