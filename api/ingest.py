@@ -124,8 +124,9 @@ INSERT_PRODUCT = (
 )
 INSERT_OBSERVATION = (
     "insert into observation (item_id, store_id, observed_at, list_price, "
-    "clearance_price, pct_off, quantity, store_only, source, trusted) "
-    "values (%s, %s, clock_timestamp(), %s, %s, %s, %s, %s, 'discovery', true)"
+    "clearance_price, pct_off, quantity, store_only, anchor_status, "
+    "source, trusted) "
+    "values (%s, %s, clock_timestamp(), %s, %s, %s, %s, %s, %s, 'discovery', true)"
 )
 BEARER_PREFIX = "Bearer "
 
@@ -211,7 +212,8 @@ def discovery(payload: dict, authorization: str = Header(None)):
                             INSERT_OBSERVATION,
                             (o["item_id"], o["store_id"], o.get("list_price"),
                              o.get("clearance_price"), o.get("pct_off"),
-                             o.get("quantity"), o.get("store_only")))
+                             o.get("quantity"), o.get("store_only"),
+                             o.get("anchor_status")))
                 except psycopg.Error as exc:
                     rejected += 1
                     # %r, not %s: item_id/store_id already passed

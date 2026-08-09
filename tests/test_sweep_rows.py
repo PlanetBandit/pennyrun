@@ -190,12 +190,12 @@ def test_a_missing_fulfillment_block_is_not_a_lead():
     assert sweep.flagged_unpriced({"itemId": "1", "fulfillment": None}, "2504") is False
 
 
-def test_counting_leads_does_not_change_which_rows_are_produced():
-    """The counter rides alongside row() and must not add, drop or alter a
-    single row -- it is measurement, not a feature."""
+def test_recording_status_does_not_change_which_rows_are_produced():
+    """Status collection rides alongside row() and must not add, drop or
+    alter a single priced row. row() itself stays free of side effects --
+    the sink is filled by its caller, never by row()."""
     import json
     p = json.loads((FIX / "products_ok.json").read_text())["data"]["products"][0]
-    before = len(sweep._FLAGGED_UNPRICED)
     r = sweep.row(p, "2502", {}, {})
     assert r is not None and r[1] == "204767783"
-    assert len(sweep._FLAGGED_UNPRICED) == before, "row() must stay side-effect free"
+    assert r[3] == 1.2 and r[7] == sweep.shelf_qty(p, "2502")

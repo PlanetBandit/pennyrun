@@ -138,9 +138,15 @@ def run_one(job, budget, base, token):
         # two callers at twenty workers each from one address is the traffic
         # that got this address cut off. Held around the pricing only, so a
         # long-running loop never starves the nightly sweep.
+        # Pairs with no clearance price are recorded too. An on-demand
+        # check is the freshest look this store will get, and an item that
+        # has come OFF clearance is as much a result as one that has gone
+        # on: without a row saying so, the old markdown stays newest and
+        # the app keeps offering a price that ended.
+        statuses = []
         with gate.exclusive("jobs.store." + str(sid)):
             rows, refused_rate, unreachable_rate = sweep.price_at(
-                sid, sid, hot_ids, meta, before)
+                sid, sid, hot_ids, meta, before, status_sink=statuses)
 
         # "They refused us" and "we had no network" need different answers, and
         # collapsing them is what let an all-unreachable job report `done` and
@@ -164,10 +170,11 @@ def run_one(job, budget, base, token):
         # database. Reporting `done` on a failed upload marks it fresh for
         # FRESH_FOR with nothing behind the claim -- the user is told their
         # prices are current and served the old ones.
-        if rows:
+        if rows or statuses:
             try:
-                got = upload.send(rows, base, token)
-                say("store %s: %d hits, uploaded %d" % (sid, len(rows), got["accepted"]))
+                got = upload.send(rows + statuses, base, token)
+                say("store %s: %d hits, %d unpriced, uploaded %d"
+                    % (sid, len(rows), len(statuses), got["accepted"]))
             except upload.UploadError as e:
                 tell(e.partial.get("accepted", 0), 0, failed=True,
                      note="priced but upload stopped: %s" % e.cause)

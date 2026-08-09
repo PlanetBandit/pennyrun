@@ -114,6 +114,13 @@ def to_observation(row):
       `None` (not `"0"`) when there isn't one, for the same
       coalesce-safety reason.
     """
+    # A status-only pair arrives already in this shape: it has no prices
+    # to format and nothing to read out of a row array, only what the
+    # store said about an item it is NOT discounting. Passed through so
+    # both kinds travel the same wire, in the same chunks, to the same
+    # endpoint -- one delivery path, one set of failure semantics.
+    if isinstance(row, dict):
+        return row
     return {"item_id": row[1], "store_id": row[6], "name": row[0] or None,
             "category": row[2] or None,
             "clearance_price": f"{row[3]:.2f}", "list_price": f"{row[4]:.2f}",

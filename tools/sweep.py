@@ -508,44 +508,82 @@ def chunks_for(n):
     return -(-n // BATCH)
 
 
-# Home Depot's own store status for the item, alongside the price. Measured
-# over 192 item x store pairs it agreed with `pricing.clearance` 191 times,
-# so it is worthless as a second clearance detector -- we already read the
-# price. The 192nd is the interesting one: a 5 gal. paint flagged CLEARANCE
-# at store 2504 with no clearance price and $335 on the shelf, while the
-# same item was $33 at 2565. Those pairs produce no row at all today.
+# Home Depot's own per-store status for an item: CLEARANCE, ACTIVE or
+# INACTIVE. Measured over 192 item x store pairs it agreed with the presence
+# of a clearance price 191 times, so it is useless as a second detector --
+# we already read the price. It is recorded for the two things it does say
+# that nothing else does:
 #
-# One sample is not a rate. This counter rides on requests the sweep already
-# makes -- the field costs nothing extra -- so a night's run measures it
-# across ~10,000 pairs instead of 192, and the number decides whether
-# capturing them is worth a schema change.
-_FLAGGED_UNPRICED = []
+#   The 192nd pair: an item the store calls CLEARANCE while the pricing
+#   block shows full price. A markdown the feed has not caught up with.
+#
+#   An item MOVING between states. ACTIVE -> INACTIVE -> CLEARANCE is a
+#   trail we cannot reconstruct later, because it only exists if somebody
+#   was writing it down at the time.
+#
+# Only pairs that produced no priced row are collected -- a hit is always
+# CLEARANCE (191/192), so storing it again would be a constant column. The
+# field itself rides on a request the sweep already makes.
+#
+# The caller owns the list. `scan()` and `tools/jobs.py` both price stores
+# through price_at(), and a module-level accumulator would pool one into
+# the other and survive a second run inside the same process, uploading
+# everything twice.
+
+
+def anchor_status(p):
+    return ((p.get("fulfillment") or {}).get("anchorStoreStatusType") or "").upper() or None
 
 
 def flagged_unpriced(p, sid):
     """Store says CLEARANCE, pricing block has no clearance price."""
-    f = (p.get("fulfillment") or {})
-    if (f.get("anchorStoreStatusType") or "").upper() != "CLEARANCE":
+    if anchor_status(p) != "CLEARANCE":
         return False
     cl = (p.get("pricing") or {}).get("clearance")
     return not cl or cl.get("value") is None
 
 
-def _rows_from(chunk, sid, meta, before):
+def status_row(p, sid, meta):
+    """A row for a pair that is NOT on clearance, carrying only what the
+    store says about it. `name`/`category` ride along so the product upsert
+    can heal a placeholder, the same as a priced row does."""
+    st = anchor_status(p)
+    if not st:
+        return None
+    m = meta.get(p.get("itemId"), ["", ""])
+    return {"item_id": p.get("itemId"), "store_id": sid, "anchor_status": st,
+            "name": m[0] or None, "category": m[1] or None}
+
+
+def _rows_from(chunk, sid, meta, before, sink):
+    """Priced rows out; statuses for the rest appended to `sink`.
+
+    `sink` is None for the cold pool: 8,000 items at one rotating store
+    with a measured 0.00% clearance rate, so recording their status would
+    be thousands of near-constant rows a night for a population that never
+    converts.
+    """
     out = []
     for p in call(chunk, sid):
-        if flagged_unpriced(p, sid):
-            _FLAGGED_UNPRICED.append((p.get("itemId"), sid))
         r = row(p, sid, meta, before)
         if r:
             out.append(r)
+        elif sink is not None:
+            st = status_row(p, sid, meta)
+            if st:
+                sink.append(st)
     return out
 
 
-def price_at(sid, name, ids, meta, before, note=""):
-    """Price `ids` at one store. Returns (rows, refusal_rate)."""
+def price_at(sid, name, ids, meta, before, note="", status_sink=None):
+    """Price `ids` at one store. Returns (rows, refusal_rate).
+
+    Pairs that came back without a clearance price are appended to
+    `status_sink` when one is given -- see `status_row`.
+    """
     s0 = time.time()
-    run = in_batches(ids, lambda chunk, s=sid: _rows_from(chunk, s, meta, before))
+    run = in_batches(ids, lambda chunk, s=sid:
+                     _rows_from(chunk, s, meta, before, status_sink))
     # Refused and unreachable are deliberately NOT summed. "They said no" is
     # evidence about this address; "we never got an answer" is evidence about
     # our own network, and a thirty-second DHCP blip must not be read as Home
@@ -583,6 +621,7 @@ def scan():
     # clearance is promoted to the hot list and priced everywhere from then
     # on, so what is left in the cold pool has already been mined. It is
     # worth re-checking slowly, not eight times a night.
+    statuses = []
     hot_ids = sorted(hot)
     cold_ids = sorted({p[1] for p in pool} - set(hot))
     if not hot_ids and not cold_ids:
@@ -620,7 +659,8 @@ def scan():
     # list, so it runs first -- if the address gets cut off mid-run, the
     # speculative half is what gets lost, not the useful half.
     for i, (sid, name) in enumerate(stores):
-        got, rate, _unreach = price_at(sid, name, hot_ids, meta, before)
+        got, rate, _unreach = price_at(sid, name, hot_ids, meta, before,
+                                       status_sink=statuses)
         hits += got
         if rate >= SCAN_ABORT_THRESHOLD:
             skipped = chunks_for(len(hot_ids)) * (len(stores) - i - 1) \
@@ -637,7 +677,8 @@ def scan():
     advance = False
     if cold_ids and not blocked:
         sid, name = stores[turn]
-        got, rate, _unreach = price_at(sid, name, cold_ids, meta, before, "  [cold pool]")
+        got, rate, _unreach = price_at(sid, name, cold_ids, meta, before,
+                                       "  [cold pool]")
         hits += got
         if rate >= SCAN_ABORT_THRESHOLD:
             say("scan: the cold sweep at %s was refused; leaving the rotation "
@@ -698,16 +739,17 @@ def scan():
         % (len(hits), covered, len(stores), (time.time() - t0) / 60,
            sum(1 for r in hits if r[14] is not None)))
 
-    # Measured, not acted on. Capturing these would mean rows in `observation`
-    # with no clearance price -- a real change to what that table means -- and
-    # that is worth a number first.
-    if _FLAGGED_UNPRICED:
-        pairs = len(hits) + len(_FLAGGED_UNPRICED)
-        say("scan: %d item x store pairs are flagged CLEARANCE by the store with no "
-            "clearance price (%.2f%% of priced pairs) — not recorded"
-            % (len(_FLAGGED_UNPRICED), 100.0 * len(_FLAGGED_UNPRICED) / max(pairs, 1)))
-        for iid, sid in _FLAGGED_UNPRICED[:5]:
-            say("        %s @ %s" % (iid, sid))
+    if statuses:
+        seen = {}
+        for st in statuses:
+            seen[st["anchor_status"]] = seen.get(st["anchor_status"], 0) + 1
+        say("scan: %d unpriced pairs recorded (%s)"
+            % (len(statuses), ", ".join("%s %d" % kv for kv in sorted(seen.items()))))
+        flagged = seen.get("CLEARANCE", 0)
+        if flagged:
+            say("scan: %d of those are flagged CLEARANCE by the store with no "
+                "clearance price — a markdown the price feed has not caught up with"
+                % flagged)
 
     # clearance.json is already written above -- collection succeeding and
     # delivery to the droplet succeeding are different events, so an upload
@@ -719,7 +761,10 @@ def scan():
     if base and token:
         from tools import upload
         try:
-            got = upload.send(hits, base, token)
+            # Priced rows and status-only pairs go up together: one
+            # request path, and a partial failure means the same thing
+            # for both.
+            got = upload.send(hits + statuses, base, token)
         except upload.UploadError as e:
             # Whatever chunks got through before the failure are already
             # permanent (observation is append-only) -- say so, so a human
@@ -731,7 +776,8 @@ def scan():
         except Exception as e:
             say("upload failed: %s -- clearance.json was still written" % e)
         else:
-            say("uploaded: %d accepted, %d rejected" % (got["accepted"], got["rejected"]))
+            say("uploaded: %d accepted, %d rejected (%d priced, %d status-only)"
+                % (got["accepted"], got["rejected"], len(hits), len(statuses)))
 
 
 def pick(hits):

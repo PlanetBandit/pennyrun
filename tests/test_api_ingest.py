@@ -346,3 +346,53 @@ def test_bad_catalogue_field_degrades_but_the_row_and_price_still_land(client):
     assert got.status_code == 200
     assert got.json()["upc"] is None
     assert got.json()["prices"][0]["clearance_price"] == "1.00"
+
+
+# ---------------------------------------------------------------------------
+# Observations with no clearance price. An item that came OFF clearance
+# produced no row before this, so its last clearance row stayed newest for
+# ever and the app kept offering a price that had ended.
+# ---------------------------------------------------------------------------
+
+def test_an_unpriced_observation_is_accepted_and_stored(client):
+    r = client.post("/api/v1/discovery", json={"observations": [
+        {"item_id": "204767783", "store_id": "2502", "anchor_status": "INACTIVE"}]},
+        headers={"Authorization": f"Bearer {TOKEN}"})
+    assert r.status_code == 200 and r.json()["accepted"] == 1
+
+    from api.db import rows
+    with rows() as cur:
+        cur.execute("select anchor_status, clearance_price from observation"
+                    " where item_id = '204767783' and store_id = '2502'"
+                    " order by observed_at desc limit 1")
+        got = cur.fetchone()
+    assert got["anchor_status"] == "INACTIVE" and got["clearance_price"] is None
+
+
+def test_an_ended_markdown_stops_being_served(client):
+    """The behaviour change that makes this worth doing."""
+    hdr = {"Authorization": f"Bearer {TOKEN}"}
+    client.post("/api/v1/discovery", json={"observations": [
+        {"item_id": "204767783", "store_id": "2502", "name": "Thing",
+         "clearance_price": "1.20", "list_price": "49.98", "pct_off": 98,
+         "anchor_status": "CLEARANCE"}]}, headers=hdr)
+    before = client.get("/api/v1/store/2502/clearance?limit=50").json()
+    assert any(x["item_id"] == "204767783" for x in before), "on clearance"
+
+    client.post("/api/v1/discovery", json={"observations": [
+        {"item_id": "204767783", "store_id": "2502", "anchor_status": "ACTIVE"}]},
+        headers=hdr)
+    after = client.get("/api/v1/store/2502/clearance?limit=50").json()
+    assert not any(x["item_id"] == "204767783" for x in after), \
+        "the markdown ended -- it must stop being offered"
+
+
+def test_status_is_upper_cased_so_one_state_is_one_state(client):
+    client.post("/api/v1/discovery", json={"observations": [
+        {"item_id": "204767783", "store_id": "2577", "anchor_status": "inactive"}]},
+        headers={"Authorization": f"Bearer {TOKEN}"})
+    from api.db import rows
+    with rows() as cur:
+        cur.execute("select anchor_status from observation where store_id = '2577'"
+                    " order by observed_at desc limit 1")
+        assert cur.fetchone()["anchor_status"] == "INACTIVE"

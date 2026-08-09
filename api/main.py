@@ -11,10 +11,15 @@ app.include_router(ingest_router)
 app.include_router(checks_router)
 app.include_router(push_router)
 
+# The newest row per item and store, whatever it says. Since observations
+# now include pairs with no clearance price, "newest" can mean "we looked
+# and it was not on clearance any more" -- and every clearance read filters
+# on `clearance_price is not null`, so those pairs correctly drop out
+# instead of the old markdown standing forever as the last thing we knew.
 LATEST = """
 select distinct on (o.item_id, o.store_id)
        o.item_id, o.store_id, o.list_price, o.clearance_price,
-       o.pct_off, o.quantity, o.store_only, o.observed_at
+       o.pct_off, o.quantity, o.store_only, o.observed_at, o.anchor_status
   from observation o
  where o.trusted
  order by o.item_id, o.store_id, o.observed_at desc
@@ -126,6 +131,30 @@ def store_clearance(store_id: str, limit: int = Query(200, le=1000),
             "   and (%s = 0 or l.quantity >= %s) "
             f" order by {_order_by(sort, dir)} limit %s",
             (store_id, min_pct, _excluded(exclude), min_qty, min_qty, limit))
+        return cur.fetchall()
+
+
+@app.get(V + "/store/{store_id}/flagged")
+def store_flagged(store_id: str, limit: int = Query(100, le=500)):
+    """Items this store calls CLEARANCE while showing no clearance price.
+
+    Measured at roughly one pair in 192 when the signal was first checked.
+    They are worth surfacing separately rather than mixing into the
+    clearance list, because there is no price to sort or filter them by --
+    the claim is only "the store's own system says this is clearance and
+    the price feed does not agree yet". Sometimes that is a markdown about
+    to appear; the point of recording them is to find out which.
+    """
+    with rows() as cur:
+        cur.execute(
+            f"with latest as ({LATEST}) "
+            "select l.item_id, p.name, p.category, p.upc, p.canonical_url, "
+            "       l.anchor_status, l.observed_at "
+            "  from latest l join product p using (item_id) "
+            " where l.store_id = %s and l.clearance_price is null "
+            "   and l.anchor_status = 'CLEARANCE' "
+            " order by l.observed_at desc, l.item_id limit %s",
+            (store_id, limit))
         return cur.fetchall()
 
 

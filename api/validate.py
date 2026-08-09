@@ -81,6 +81,10 @@ ID_MAX_LEN = 64
 ID_RE = re.compile(r"[A-Za-z0-9_-]+")
 NAME_MAX_LEN = 200
 CATEGORY_MAX_LEN = 64
+# CLEARANCE / ACTIVE / INACTIVE today; sized for a value we do not
+# control adding a longer one, and small enough that a runaway string
+# is truncated rather than stored.
+ANCHOR_STATUS_MAX_LEN = 32
 URL_MAX_LEN = 300
 CATALOG_FIELD_MAX_LEN = 64  # upc / store_sku / model_number / replacement_id
 CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f\x7f]")
@@ -173,6 +177,12 @@ def check(obs):
     store_sku = _degrade_text(obs.get("store_sku"), CATALOG_FIELD_MAX_LEN)
     model_number = _degrade_text(obs.get("model_number"), CATALOG_FIELD_MAX_LEN)
     replacement_id = _degrade_text(obs.get("replacement_id"), CATALOG_FIELD_MAX_LEN)
+    # Upper-cased on the way in for the same reason departments are
+    # normalised: two spellings of one status is two states in every
+    # query that ever groups by it.
+    anchor_status = _degrade_text(obs.get("anchor_status"), ANCHOR_STATUS_MAX_LEN)
+    if anchor_status:
+        anchor_status = anchor_status.upper()
 
     clearance = obs.get("clearance_price")
     listed = obs.get("list_price")
@@ -214,6 +224,7 @@ def check(obs):
 
     return {
         "item_id": item_id, "store_id": store_id, "name": name,
+        "anchor_status": anchor_status,
         "category": category, "canonical_url": canonical_url, "upc": upc,
         "store_sku": store_sku, "model_number": model_number,
         "replacement_id": replacement_id,

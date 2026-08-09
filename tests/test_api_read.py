@@ -445,3 +445,37 @@ def test_the_chip_counts_honour_the_stock_floor(dept_client):
     # the chip count and the rows it would produce have to agree
     rows = dept_client.get("/api/v1/store/2577/clearance?limit=50&min_qty=1").json()
     assert len([r for r in rows if r["category"] == "Paint"]) == tight["Paint"]
+
+
+def test_flagged_lists_items_the_store_calls_clearance_without_a_price(dept_client):
+    """Kept out of the clearance list on purpose: there is no price to sort
+    or filter by. The claim is only that the store's own system says
+    clearance and the price feed does not agree yet."""
+    from db import migrate
+
+    conn = migrate.connect()
+    with conn.cursor() as cur:
+        cur.execute("set search_path to " + os.environ["PENNYRUN_DB_SCHEMA"])
+        cur.execute("insert into product (item_id, name, category)"
+                    " values ('ghost1','Peach Fade 5 gal','Paint')")
+        cur.execute(
+            "insert into observation (item_id, store_id, list_price, clearance_price,"
+            " anchor_status, source, trusted)"
+            " values ('ghost1','2577',335,null,'CLEARANCE','discovery',true)")
+        # an ACTIVE unpriced pair must NOT show up
+        cur.execute("insert into product (item_id, name) values ('plain1','Normal')")
+        cur.execute(
+            "insert into observation (item_id, store_id, list_price, clearance_price,"
+            " anchor_status, source, trusted)"
+            " values ('plain1','2577',10,null,'ACTIVE','discovery',true)")
+    conn.commit()
+    conn.close()
+
+    got = dept_client.get("/api/v1/store/2577/flagged").json()
+    ids = [r["item_id"] for r in got]
+    assert ids == ["ghost1"]
+    assert got[0]["name"] == "Peach Fade 5 gal"
+
+    # and it stays out of the priced list, which has no price to show for it
+    priced = dept_client.get("/api/v1/store/2577/clearance?limit=50").json()
+    assert "ghost1" not in [r["item_id"] for r in priced]
