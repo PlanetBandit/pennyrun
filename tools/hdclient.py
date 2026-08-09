@@ -28,7 +28,8 @@ _FULL = ('query q($ids: [String!]!) { products(itemIds: $ids) { itemId '
          'pricing(storeId: "%(s)s", isBrandPricingPolicyCompliant: false) '
          '{ value clearance { value dollarOff percentageOff } } '
          'fulfillment(storeId: "%(s)s") { fulfillmentOptions { type fulfillable '
-         'services { locations { locationId isAnchor inventory { quantity } } } } } } }')
+         'services { type locations { locationId isAnchor type '
+         'inventory { quantity } } } } } } }')
 
 _LITE = ('query q($ids: [String!]!) { products(itemIds: $ids) { itemId '
          'identifiers { productLabel } taxonomy { breadCrumbs { label } } '

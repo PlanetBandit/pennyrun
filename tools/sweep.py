@@ -422,26 +422,61 @@ def age_out(hot):
 
 # ------------------------------------------------------------------- scan
 
+def shelf_qty(p, sid):
+    """How many are on the shelf at THIS store, or None if we cannot tell.
+
+    Home Depot files two very different numbers under `pickup`, and until
+    this function existed we recorded whichever came last:
+
+      pickup / bopis / location type "store"   -- buy online, pick up in
+          store. A real count of what is in that building. It differs
+          store to store, which is the whole point.
+
+      pickup / boss  / location type "online"  -- buy online, SHIP to
+          store. The number is the online fulfilment pool, and it comes
+          back identical at every store because it is the same warehouse.
+          One lawn fertiliser read 17,391 at five different stores.
+
+    Both arrive with `locationId` set to the store you asked about and
+    `isAnchor: true`, so neither the id nor the anchor flag can separate
+    them -- only `services.type` and `locations.type` can, and the query
+    did not request either. That is what made a warehouse figure look like
+    a shelf count for two thirds of the rows we hold.
+
+    A neighbouring store's bopis location also appears in the same list,
+    with `isAnchor` sometimes set on it rather than on ours. So the id is
+    checked directly instead of trusting the flag: a neighbour's pile is
+    not stock on the shelf you are standing at.
+
+    An item offered only as boss returns None, not zero. We know it is not
+    stocked for immediate pickup; we do not know that the shelf is empty,
+    and the app treats those two differently -- None never passes a stock
+    floor, and never claims "none left" on a row.
+    """
+    for o in ((p.get("fulfillment") or {}).get("fulfillmentOptions") or []):
+        if o.get("type") != "pickup":
+            continue
+        for s in (o.get("services") or []):
+            if (s.get("type") or "").lower() != "bopis":
+                continue
+            for loc in (s.get("locations") or []):
+                if (loc.get("type") or "").lower() != "store":
+                    continue
+                if str(loc.get("locationId")) != str(sid):
+                    continue
+                q = (loc.get("inventory") or {}).get("quantity")
+                if q is not None:
+                    return q
+    return None
+
+
 def row(p, sid, meta, before):
     pr = p.get("pricing") or {}
     cl = pr.get("clearance")
     if not cl or cl.get("value") is None:
         return None
 
-    # Home Depot returns several pickup locations: this store plus nearby
-    # ones that could fill the order. Only the anchor is ours -- taking any
-    # other reports a neighbour's pile as stock on the shelf you're at.
-    qty = None
-    for o in ((p.get("fulfillment") or {}).get("fulfillmentOptions") or []):
-        if o.get("type") != "pickup":
-            continue
-        for s in (o.get("services") or []):
-            for loc in (s.get("locations") or []):
-                if not (loc.get("isAnchor") or str(loc.get("locationId")) == sid):
-                    continue
-                inv = loc.get("inventory") or {}
-                if inv.get("quantity") is not None:
-                    qty = inv["quantity"]
+    qty = shelf_qty(p, sid)
 
     store_only = 1 if (p.get("availabilityType") or {}).get("type") == "Store Only" else 0
     # a designated successor SKU means the item is being phased out; it runs

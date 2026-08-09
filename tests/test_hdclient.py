@@ -174,3 +174,15 @@ def test_sitemap_expect_xml_false_skips_the_content_check(monkeypatch):
                          FakeGetResponse(200, html, {"Content-Type": "text/html"}))
     got = hdclient.sitemap("https://www.homedepot.com/s/mulch%20clearance", expect_xml=False)
     assert got == html
+
+
+def test_the_product_query_requests_the_fields_that_identify_shelf_stock():
+    """`services.type` and `locations.type` are the only things separating a
+    shelf count from the ship-to-store pool -- both arrive with this store's
+    id and isAnchor true. Dropping either from the query silently turns
+    warehouse figures back into shelf counts, and nothing else would fail."""
+    from tools import hdclient
+
+    q = hdclient._FULL
+    assert "services { type locations" in q, "services.type not requested"
+    assert "locationId isAnchor type" in q, "locations.type not requested"

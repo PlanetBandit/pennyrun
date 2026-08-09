@@ -1,0 +1,109 @@
+{
+ "data": {
+  "products": [
+   {
+    "itemId": "204177723",
+    "fulfillment": {
+     "fulfillmentOptions": [
+      {
+       "type": "pickup",
+       "fulfillable": true,
+       "services": [
+        {
+         "type": "boss",
+         "locations": [
+          {
+           "locationId": "2565",
+           "isAnchor": true,
+           "type": "online",
+           "inventory": {
+            "quantity": 4995
+           }
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "type": "delivery",
+       "fulfillable": true,
+       "services": [
+        {
+         "type": "sth",
+         "locations": [
+          {
+           "locationId": "8119",
+           "isAnchor": false,
+           "type": "online",
+           "inventory": {
+            "quantity": 4995
+           }
+          }
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   },
+   {
+    "itemId": "100267863",
+    "fulfillment": {
+     "fulfillmentOptions": [
+      {
+       "type": "pickup",
+       "fulfillable": true,
+       "services": [
+        {
+         "type": "bopis",
+         "locations": [
+          {
+           "locationId": "2565",
+           "isAnchor": true,
+           "type": "store",
+           "inventory": {
+            "quantity": 4
+           }
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "type": "delivery",
+       "fulfillable": true,
+       "services": [
+        {
+         "type": "express delivery",
+         "locations": [
+          {
+           "locationId": "2565",
+           "isAnchor": false,
+           "type": "store",
+           "inventory": {
+            "quantity": 50
+           }
+          }
+         ]
+        },
+        {
+         "type": "sth",
+         "locations": [
+          {
+           "locationId": "8119",
+           "isAnchor": false,
+           "type": "online",
+           "inventory": {
+            "quantity": 99
+           }
+          }
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   }
+  ]
+ }
+}
