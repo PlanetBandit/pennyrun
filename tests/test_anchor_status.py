@@ -92,3 +92,46 @@ def test_upload_still_formats_a_priced_row():
            "upc", "sku", "model", 0, None]
     got = upload.to_observation(row)
     assert got["clearance_price"] == "1.20" and got["item_id"] == "1"
+
+
+# ------------------------------------------------------------- reading it back
+
+@pytest.mark.skipif(not os.environ.get("PENNYRUN_DB_URL"), reason="needs a database")
+def test_statuswatch_classifies_every_state(conn):
+    """The state expression is the whole report -- a row that fell through
+    it would be counted as a transition that never happened.
+
+    Run against a VALUES list rather than the table: `observation` is
+    append-only by trigger, so a test that inserted rows here could never
+    clean up after itself and would leave them in the shared schema for
+    every later module.
+    """
+    from tools import statuswatch
+
+    with conn.cursor() as cur:
+        cur.execute(
+            "select o.clearance_price, o.anchor_status, " + statuswatch.STATE +
+            " as state from (values"
+            "  (1.20::numeric, 'CLEARANCE'),"      # a price beats the status
+            "  (null,          'CLEARANCE'),"      # the lead
+            "  (null,          'ACTIVE'),"
+            "  (null,          'INACTIVE'),"
+            "  (null,          null)"              # a status we have not seen
+            ") as o(clearance_price, anchor_status)")
+        got = [r[2] for r in cur.fetchall()]
+
+    assert got == ["PRICED", "FLAGGED", "ACTIVE", "INACTIVE", "NA"]
+
+
+def test_statuswatch_queries_are_valid_sql(conn):
+    """Cheap guard: the report is three long strings, and a typo in one
+    would only surface the day somebody went looking for the answer."""
+    from tools import statuswatch
+
+    with conn.cursor() as cur:
+        from db import migrate
+        migrate.apply(conn)
+        cur.execute(statuswatch.COVERAGE)
+        cur.fetchall()
+        cur.execute(statuswatch.MOVES)
+        cur.fetchall()
